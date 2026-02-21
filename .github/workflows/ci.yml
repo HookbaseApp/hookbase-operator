@@ -110,3 +110,97 @@ jobs:
           push: true
           tags: ${{ steps.meta-agent.outputs.tags }}
           labels: ${{ steps.meta-agent.outputs.labels }}
+
+  integration:
+    name: Integration Test
+    runs-on: ubuntu-latest
+    needs: [test, lint]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    env:
+      HOOKBASE_API_KEY: ${{ secrets.HOOKBASE_API_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.23"
+
+      - name: Build operator image
+        run: docker build -t ghcr.io/hookbaseapp/hookbase-operator:test -f Dockerfile .
+
+      - name: Create kind cluster
+        uses: helm/kind-action@v1
+        with:
+          cluster_name: hookbase-test
+
+      - name: Load image into kind
+        run: kind load docker-image ghcr.io/hookbaseapp/hookbase-operator:test --name hookbase-test
+
+      - name: Deploy operator
+        run: |
+          kubectl create namespace hookbase-system
+          kubectl create secret generic hookbase-api-key \
+            -n hookbase-system \
+            --from-literal=apiKey="$HOOKBASE_API_KEY"
+          helm install hookbase-operator ./chart \
+            -n hookbase-system \
+            --set image.tag=test \
+            --set image.pullPolicy=Never \
+            --set hookbase.apiKeySecretRef.name=hookbase-api-key \
+            --set hookbase.baseURL=https://api.hookbase.app
+          kubectl rollout status deployment/hookbase-operator -n hookbase-system --timeout=60s
+
+      - name: Verify CRDs installed
+        run: |
+          kubectl get crds | grep hookbase
+          CRD_COUNT=$(kubectl get crds | grep -c hookbase)
+          if [ "$CRD_COUNT" -lt 5 ]; then
+            echo "Expected at least 5 Hookbase CRDs, got $CRD_COUNT"
+            exit 1
+          fi
+
+      - name: Apply test WebhookSource
+        run: |
+          cat <<'YAML' | kubectl apply -f -
+          apiVersion: hookbase.io/v1alpha1
+          kind: WebhookSource
+          metadata:
+            name: ci-test-source
+          spec:
+            name: CI Test Source
+            slug: ci-test-source
+            provider: custom
+          YAML
+
+      - name: Wait for source to sync
+        run: |
+          echo "Waiting for WebhookSource to become Ready..."
+          for i in $(seq 1 30); do
+            STATUS=$(kubectl get webhooksource ci-test-source -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null || echo "")
+            REASON=$(kubectl get webhooksource ci-test-source -o jsonpath='{.status.conditions[?(@.type=="Ready")].reason}' 2>/dev/null || echo "")
+            SOURCE_ID=$(kubectl get webhooksource ci-test-source -o jsonpath='{.status.sourceId}' 2>/dev/null || echo "")
+            echo "  Attempt $i: status=$STATUS reason=$REASON sourceId=$SOURCE_ID"
+            if [ "$STATUS" = "True" ]; then
+              echo "Source synced successfully!"
+              break
+            fi
+            sleep 5
+          done
+          if [ "$STATUS" != "True" ]; then
+            echo "Source did not become Ready within 150s"
+            kubectl describe webhooksource ci-test-source
+            kubectl logs -n hookbase-system deployment/hookbase-operator --tail=50
+            exit 1
+          fi
+
+      - name: Verify source has ID and ingest URL
+        run: |
+          SOURCE_ID=$(kubectl get webhooksource ci-test-source -o jsonpath='{.status.sourceId}')
+          INGEST_URL=$(kubectl get webhooksource ci-test-source -o jsonpath='{.status.ingestUrl}')
+          echo "Source ID: $SOURCE_ID"
+          echo "Ingest URL: $INGEST_URL"
+          test -n "$SOURCE_ID" || { echo "sourceId is empty"; exit 1; }
+
+      - name: Cleanup test source
+        if: always()
+        run: kubectl delete webhooksource ci-test-source --ignore-not-found

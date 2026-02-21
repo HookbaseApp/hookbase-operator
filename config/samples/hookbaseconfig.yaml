@@ -1,0 +1,11 @@
+apiVersion: hookbase.io/v1alpha1
+kind: HookbaseConfig
+metadata:
+  name: hookbase
+spec:
+  apiBaseUrl: "https://api.hookbase.app"
+  defaultBootstrapAPIKeySecretRef:
+    name: hookbase-operator-bootstrap-key
+    key: apiKey
+  defaultAgentImage: "ghcr.io/hookbaseapp/hookbase-agent:latest"
+  defaultReconcileInterval: "5m"

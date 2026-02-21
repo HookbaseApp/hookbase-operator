@@ -1,0 +1,20 @@
+apiVersion: hookbase.io/v1alpha1
+kind: HookbaseAPIKey
+metadata:
+  name: team-key
+  labels:
+    hookbase.io/default: "true"
+spec:
+  name: Team API Key
+  scopes:
+    - sources:read
+    - sources:write
+    - destinations:read
+    - destinations:write
+    - routes:read
+    - routes:write
+    - events:read
+  expiresInDays: 90
+  secretRef:
+    name: hookbase-team-key
+    key: apiKey

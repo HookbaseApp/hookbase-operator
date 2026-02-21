@@ -1,0 +1,22 @@
+apiVersion: hookbase.io/v1alpha1
+kind: WebhookRoute
+metadata:
+  name: github-to-api
+spec:
+  name: GitHub to Internal API
+  sourceRef: github-webhooks
+  destinationRef: internal-api
+  filterConditions:
+    - field: headers.x-github-event
+      operator: in
+      value: "push,pull_request,release"
+  filterLogic: OR
+  isActive: true
+  notifications:
+    onFailure: true
+    onRecovery: true
+    emails: "team@example.com"
+  circuitBreaker:
+    failureThreshold: 5
+    cooldownSeconds: 60
+    probeSuccessThreshold: 2

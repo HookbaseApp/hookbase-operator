@@ -1,0 +1,18 @@
+apiVersion: hookbase.io/v1alpha1
+kind: WebhookSource
+metadata:
+  name: github-webhooks
+  labels:
+    hookbase.io/default: "true"
+spec:
+  name: GitHub Webhooks
+  slug: github-webhooks
+  provider: github
+  description: "Receives webhooks from GitHub repositories"
+  verifySignature: true
+  signingSecretRef:
+    name: github-webhook-secret
+    key: secret
+  rateLimitPerMinute: 1000
+  dedupStrategy: header
+  dedupWindowHours: 24

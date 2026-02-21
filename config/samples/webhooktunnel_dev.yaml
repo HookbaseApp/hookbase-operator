@@ -1,0 +1,17 @@
+apiVersion: hookbase.io/v1alpha1
+kind: WebhookTunnel
+metadata:
+  name: dev-tunnel
+spec:
+  name: Dev Tunnel
+  targetPort: 8080
+  targetService: my-app
+  sidecarInjection:
+    deploymentRef: my-app
+    resources:
+      requests:
+        cpu: 10m
+        memory: 16Mi
+      limits:
+        cpu: 100m
+        memory: 64Mi

@@ -1,0 +1,129 @@
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: webhooksources.hookbase.io
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.16.0
+  labels:
+    {{- include "hookbase-operator.labels" . | nindent 4 }}
+spec:
+  group: hookbase.io
+  names:
+    kind: WebhookSource
+    listKind: WebhookSourceList
+    plural: webhooksources
+    singular: webhooksource
+    shortNames:
+      - ws
+      - wsrc
+  scope: Namespaced
+  versions:
+    - name: v1alpha1
+      served: true
+      storage: true
+      subresources:
+        status: {}
+      additionalPrinterColumns:
+        - name: Source ID
+          type: string
+          jsonPath: .status.sourceId
+        - name: Provider
+          type: string
+          jsonPath: .spec.provider
+        - name: Ready
+          type: string
+          jsonPath: .status.conditions[?(@.type=="Ready")].status
+        - name: Age
+          type: date
+          jsonPath: .metadata.creationTimestamp
+      schema:
+        openAPIV3Schema:
+          type: object
+          properties:
+            apiVersion:
+              type: string
+            kind:
+              type: string
+            metadata:
+              type: object
+            spec:
+              type: object
+              required: [name]
+              properties:
+                name:
+                  type: string
+                slug:
+                  type: string
+                provider:
+                  type: string
+                  default: generic
+                description:
+                  type: string
+                signingSecretRef:
+                  type: object
+                  properties:
+                    name:
+                      type: string
+                    key:
+                      type: string
+                verifySignature:
+                  type: boolean
+                rateLimitPerMinute:
+                  type: integer
+                ipFilterMode:
+                  type: string
+                  enum: [none, allowlist, denylist]
+                ipAllowlist:
+                  type: array
+                  items:
+                    type: string
+                ipDenylist:
+                  type: array
+                  items:
+                    type: string
+                dedupStrategy:
+                  type: string
+                  enum: [none, header, payload_hash, event_id]
+                dedupWindowHours:
+                  type: integer
+                transientMode:
+                  type: boolean
+                apiKeyRef:
+                  type: object
+                  properties:
+                    name:
+                      type: string
+                    key:
+                      type: string
+            status:
+              type: object
+              properties:
+                sourceId:
+                  type: string
+                ingestUrl:
+                  type: string
+                observedGeneration:
+                  type: integer
+                  format: int64
+                lastSyncTime:
+                  type: string
+                  format: date-time
+                conditions:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      type:
+                        type: string
+                      status:
+                        type: string
+                      reason:
+                        type: string
+                      message:
+                        type: string
+                      lastTransitionTime:
+                        type: string
+                        format: date-time
+                      observedGeneration:
+                        type: integer
+                        format: int64

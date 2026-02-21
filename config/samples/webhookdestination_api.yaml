@@ -1,0 +1,17 @@
+apiVersion: hookbase.io/v1alpha1
+kind: WebhookDestination
+metadata:
+  name: internal-api
+spec:
+  name: Internal API
+  slug: internal-api
+  url: "https://api.internal.example.com/webhooks"
+  method: POST
+  headers:
+    X-Source: hookbase
+  authType: bearer
+  authSecretRef:
+    name: api-auth-secret
+    key: token
+  timeoutMs: 10000
+  retryCount: 3

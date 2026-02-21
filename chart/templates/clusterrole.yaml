@@ -1,0 +1,71 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "hookbase-operator.fullname" . }}
+  labels:
+    {{- include "hookbase-operator.labels" . | nindent 4 }}
+rules:
+  # Hookbase CRDs
+  - apiGroups: ["hookbase.io"]
+    resources:
+      - webhooksources
+      - webhookdestinations
+      - webhookroutes
+      - webhooktunnels
+      - webhooktransforms
+      - webhookfilters
+      - webhookschemas
+      - hookbasecronjobs
+      - hookbaseapikeys
+      - hookbaseconfigs
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  - apiGroups: ["hookbase.io"]
+    resources:
+      - webhooksources/status
+      - webhookdestinations/status
+      - webhookroutes/status
+      - webhooktunnels/status
+      - webhooktransforms/status
+      - webhookfilters/status
+      - webhookschemas/status
+      - hookbasecronjobs/status
+      - hookbaseapikeys/status
+      - hookbaseconfigs/status
+    verbs: ["get", "update", "patch"]
+  - apiGroups: ["hookbase.io"]
+    resources:
+      - webhooksources/finalizers
+      - webhookdestinations/finalizers
+      - webhookroutes/finalizers
+      - webhooktunnels/finalizers
+      - webhooktransforms/finalizers
+      - webhookfilters/finalizers
+      - webhookschemas/finalizers
+      - hookbasecronjobs/finalizers
+      - hookbaseapikeys/finalizers
+    verbs: ["update"]
+  # Core resources
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["get", "list", "watch", "create", "update", "patch"]
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["events"]
+    verbs: ["create", "patch"]
+  # Deployments for sidecar injection
+  - apiGroups: ["apps"]
+    resources: ["deployments"]
+    verbs: ["get", "list", "watch", "update", "patch"]
+  # Ingress controller
+  - apiGroups: ["networking.k8s.io"]
+    resources: ["ingresses"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["networking.k8s.io"]
+    resources: ["ingresses/status"]
+    verbs: ["update"]
+  # Leader election
+  - apiGroups: ["coordination.k8s.io"]
+    resources: ["leases"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]

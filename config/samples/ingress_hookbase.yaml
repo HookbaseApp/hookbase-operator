@@ -1,0 +1,22 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: my-app-webhooks
+  annotations:
+    hookbase.io/source-provider: "stripe"
+    hookbase.io/source-verify-signature: "true"
+    hookbase.io/source-signing-secret-ref: "stripe-secret:whsec"
+    hookbase.io/api-key-ref: "hookbase-team-key"
+spec:
+  ingressClassName: hookbase
+  rules:
+    - host: webhooks.example.com
+      http:
+        paths:
+          - path: /stripe
+            pathType: Prefix
+            backend:
+              service:
+                name: payment-service
+                port:
+                  number: 8080

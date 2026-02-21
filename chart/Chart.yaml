@@ -1,0 +1,17 @@
+apiVersion: v2
+name: hookbase-operator
+description: Kubernetes operator for managing Hookbase webhook resources
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+home: https://hookbase.app
+sources:
+  - https://github.com/hookbase/hookbase-operator
+keywords:
+  - hookbase
+  - webhooks
+  - operator
+  - kubernetes
+maintainers:
+  - name: Hookbase
+    url: https://hookbase.app

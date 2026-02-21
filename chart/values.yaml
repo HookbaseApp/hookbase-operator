@@ -1,0 +1,89 @@
+# Hookbase Operator Helm values
+
+# Operator image
+image:
+  repository: ghcr.io/hookbaseapp/hookbase-operator
+  tag: ""  # Defaults to appVersion
+  pullPolicy: IfNotPresent
+
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+
+# Hookbase API configuration
+hookbase:
+  # Bootstrap API key (plaintext — prefer apiKeySecretRef for production)
+  apiKey: ""
+  # Reference to existing Secret containing the API key
+  apiKeySecretRef:
+    name: ""
+    key: "apiKey"
+  # Hookbase API base URL
+  baseURL: "https://api.hookbase.app"
+
+# Agent sidecar defaults
+agent:
+  image: "ghcr.io/hookbaseapp/hookbase-agent:latest"
+
+# Controller configuration
+controller:
+  # Reconcile interval for drift detection
+  reconcileInterval: "5m"
+  # Leader election (enable for HA deployments)
+  leaderElect: false
+
+# Watch configuration
+# Empty list = watch all namespaces
+watchNamespaces: []
+
+# Admission webhooks
+webhook:
+  enabled: false
+  # Use cert-manager for TLS certificates
+  certManager:
+    enabled: false
+    issuerRef:
+      name: ""
+      kind: "ClusterIssuer"
+
+# Prometheus metrics
+metrics:
+  enabled: true
+  serviceMonitor:
+    enabled: false
+    namespace: ""
+    interval: "30s"
+    labels: {}
+
+# Pod configuration
+replicaCount: 1
+
+serviceAccount:
+  create: true
+  name: ""
+  annotations: {}
+
+resources:
+  limits:
+    cpu: 200m
+    memory: 256Mi
+  requests:
+    cpu: 100m
+    memory: 128Mi
+
+nodeSelector: {}
+tolerations: []
+affinity: {}
+
+# Pod security
+podSecurityContext:
+  runAsNonRoot: true
+  seccompProfile:
+    type: RuntimeDefault
+
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop:
+      - ALL

@@ -1,0 +1,14 @@
+# Binaries
+bin/
+/operator
+/agent
+/mock-api
+
+# Test coverage
+cover.out
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo

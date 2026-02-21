@@ -2,15 +2,11 @@ FROM golang:1.23-alpine AS builder
 
 WORKDIR /build
 
-# Copy go.mod/go.sum for both operator and the local SDK dependency
-COPY operator/go.mod operator/go.sum ./operator/
-COPY sdk/go-sdk/go.mod ./sdk/go-sdk/
-RUN cd operator && go mod download
+COPY go.mod go.sum ./
+COPY vendor/ ./vendor/
 
-# Copy source code
-COPY sdk/go-sdk/ ./sdk/go-sdk/
-COPY operator/ ./operator/
-RUN cd operator && CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o /hookbase-operator ./cmd/operator/
+COPY . .
+RUN CGO_ENABLED=0 GOOS=linux go build -mod=vendor -ldflags="-s -w" -o /hookbase-operator ./cmd/operator/
 
 FROM gcr.io/distroless/static-debian12:nonroot
 WORKDIR /

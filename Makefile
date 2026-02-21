@@ -45,16 +45,16 @@ lint: ## Run golangci-lint.
 
 .PHONY: build
 build: fmt vet ## Build operator and agent binaries.
-	CGO_ENABLED=0 go build -ldflags="-s -w" -o bin/operator ./cmd/operator/
-	CGO_ENABLED=0 go build -ldflags="-s -w" -o bin/agent ./cmd/agent/
+	CGO_ENABLED=0 go build -mod=vendor -ldflags="-s -w" -o bin/operator ./cmd/operator/
+	CGO_ENABLED=0 go build -mod=vendor -ldflags="-s -w" -o bin/agent ./cmd/agent/
 
 .PHONY: build-operator
 build-operator: ## Build operator binary only.
-	CGO_ENABLED=0 go build -ldflags="-s -w" -o bin/operator ./cmd/operator/
+	CGO_ENABLED=0 go build -mod=vendor -ldflags="-s -w" -o bin/operator ./cmd/operator/
 
 .PHONY: build-agent
 build-agent: ## Build agent binary only.
-	CGO_ENABLED=0 go build -ldflags="-s -w" -o bin/agent ./cmd/agent/
+	CGO_ENABLED=0 go build -mod=vendor -ldflags="-s -w" -o bin/agent ./cmd/agent/
 
 .PHONY: run
 run: fmt vet ## Run operator from your host.
@@ -64,11 +64,11 @@ run: fmt vet ## Run operator from your host.
 
 .PHONY: docker-build
 docker-build: ## Build operator docker image.
-	docker build -t ${IMG} -f Dockerfile ..
+	docker build -t ${IMG} -f Dockerfile .
 
 .PHONY: docker-build-agent
 docker-build-agent: ## Build agent docker image.
-	docker build -t ${AGENT_IMG} -f Dockerfile.agent ..
+	docker build -t ${AGENT_IMG} -f Dockerfile.agent .
 
 .PHONY: docker-push
 docker-push: ## Push operator docker image.

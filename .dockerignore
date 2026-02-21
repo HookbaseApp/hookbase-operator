@@ -1,0 +1,10 @@
+bin/
+cover.out
+.git/
+.github/
+.idea/
+.vscode/
+docs/
+config/
+*.swp
+*.swo

@@ -2,6 +2,23 @@ package v1alpha1
 
 import metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
+// FieldMappingSpec defines a mapping between source and target fields for warehouse destinations.
+type FieldMappingSpec struct {
+	// Source is the source field path (e.g., "$.id").
+	Source string `json:"source"`
+
+	// Target is the target column name in the warehouse.
+	Target string `json:"target"`
+
+	// Type is the data type (string, number, boolean, timestamp, json).
+	// +kubebuilder:validation:Enum=string;number;boolean;timestamp;json
+	Type string `json:"type"`
+
+	// Default is the default value if the source field is missing.
+	// +optional
+	Default string `json:"default,omitempty"`
+}
+
 // WebhookDestinationSpec defines the desired state of a webhook destination.
 type WebhookDestinationSpec struct {
 	// Name of the destination in Hookbase.
@@ -15,8 +32,27 @@ type WebhookDestinationSpec struct {
 	// +optional
 	Description string `json:"description,omitempty"`
 
-	// URL is the endpoint to deliver webhooks to.
-	URL string `json:"url"`
+	// Type is the destination type.
+	// +kubebuilder:default=http
+	// +kubebuilder:validation:Enum=http;s3;r2;gcs;azure_blob
+	// +optional
+	Type string `json:"type,omitempty"`
+
+	// URL is the endpoint to deliver webhooks to. Required for HTTP destinations.
+	// +optional
+	URL string `json:"url,omitempty"`
+
+	// ConfigSecretRef references a K8s Secret containing warehouse configuration.
+	// For S3: keys "bucket", "region", "accessKeyId", "secretAccessKey", "prefix" (optional).
+	// For R2: keys "bucket", "endpoint" (S3 API URL), "accessKeyId", "secretAccessKey", "prefix" (optional).
+	// For GCS: keys "bucket", "projectId", "credentials", "prefix" (optional).
+	// For Azure Blob: keys "container", "storageAccount", "accessKey", "prefix" (optional).
+	// +optional
+	ConfigSecretRef *SecretKeyRef `json:"configSecretRef,omitempty"`
+
+	// FieldMapping defines field mappings for warehouse destinations.
+	// +optional
+	FieldMapping []FieldMappingSpec `json:"fieldMapping,omitempty"`
 
 	// Method is the HTTP method for delivery.
 	// +kubebuilder:default=POST
@@ -51,6 +87,22 @@ type WebhookDestinationSpec struct {
 	// +optional
 	RateLimitPerMinute *int `json:"rateLimitPerMinute,omitempty"`
 
+	// UseStaticIP enables static IP delivery, routing webhooks through a dedicated
+	// proxy with a fixed egress IP address. Available on Pro and Business plans.
+	// Defaults to true on qualifying plans.
+	// +optional
+	UseStaticIP *bool `json:"useStaticIp,omitempty"`
+
+	// BatchSize is the number of events to accumulate before flushing to
+	// a warehouse destination. Only applicable to warehouse types (s3, r2, gcs, azure_blob).
+	// +optional
+	BatchSize *int `json:"batchSize,omitempty"`
+
+	// BatchWindowSeconds is the maximum number of seconds to wait before
+	// flushing a batch to a warehouse destination, even if BatchSize has not been reached.
+	// +optional
+	BatchWindowSeconds *int `json:"batchWindowSeconds,omitempty"`
+
 	// APIKeyRef references a HookbaseAPIKey or Secret for authentication.
 	// +optional
 	APIKeyRef *SecretKeyRef `json:"apiKeyRef,omitempty"`
@@ -74,6 +126,7 @@ type WebhookDestinationStatus struct {
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
 // +kubebuilder:printcolumn:name="Destination ID",type=string,JSONPath=`.status.destinationId`
+// +kubebuilder:printcolumn:name="Type",type=string,JSONPath=`.spec.type`
 // +kubebuilder:printcolumn:name="URL",type=string,JSONPath=`.spec.url`
 // +kubebuilder:printcolumn:name="Ready",type=string,JSONPath=`.status.conditions[?(@.type=="Ready")].status`
 // +kubebuilder:printcolumn:name="Age",type=date,JSONPath=`.metadata.creationTimestamp`

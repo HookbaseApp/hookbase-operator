@@ -17,12 +17,13 @@ import (
 // --- Mock Hookbase API Server ---
 
 type mockAPI struct {
-	mu       sync.Mutex
-	sources  map[string]*hookbasesdk.Source
-	routes   map[string]*hookbasesdk.Route
-	apiKeys  map[string]*hookbasesdk.APIKeyWithSecret
-	requests []apiRequest
-	nextID   int
+	mu           sync.Mutex
+	sources      map[string]*hookbasesdk.Source
+	destinations map[string]*hookbasesdk.Destination
+	routes       map[string]*hookbasesdk.Route
+	apiKeys      map[string]*hookbasesdk.APIKeyWithSecret
+	requests     []apiRequest
+	nextID       int
 }
 
 type apiRequest struct {
@@ -33,10 +34,11 @@ type apiRequest struct {
 
 func newMockAPI() *mockAPI {
 	return &mockAPI{
-		sources: make(map[string]*hookbasesdk.Source),
-		routes:  make(map[string]*hookbasesdk.Route),
-		apiKeys: make(map[string]*hookbasesdk.APIKeyWithSecret),
-		nextID:  1,
+		sources:      make(map[string]*hookbasesdk.Source),
+		destinations: make(map[string]*hookbasesdk.Destination),
+		routes:       make(map[string]*hookbasesdk.Route),
+		apiKeys:      make(map[string]*hookbasesdk.APIKeyWithSecret),
+		nextID:       1,
 	}
 }
 
@@ -49,6 +51,14 @@ func (m *mockAPI) handler() http.Handler {
 	})
 	mux.HandleFunc("/api/sources/", func(w http.ResponseWriter, r *http.Request) {
 		m.handleSources(w, r)
+	})
+
+	// Destinations
+	mux.HandleFunc("/api/destinations", func(w http.ResponseWriter, r *http.Request) {
+		m.handleDestinations(w, r)
+	})
+	mux.HandleFunc("/api/destinations/", func(w http.ResponseWriter, r *http.Request) {
+		m.handleDestinations(w, r)
 	})
 
 	// API Keys
@@ -185,6 +195,82 @@ func (m *mockAPI) handleSources(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		delete(m.sources, id)
+		w.WriteHeader(http.StatusNoContent)
+	}
+}
+
+func (m *mockAPI) handleDestinations(w http.ResponseWriter, r *http.Request) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.requests = append(m.requests, apiRequest{Method: r.Method, Path: r.URL.Path})
+
+	path := strings.TrimSuffix(r.URL.Path, "/")
+	if path == "/api/destinations" {
+		switch r.Method {
+		case "POST":
+			var params hookbasesdk.CreateDestinationParams
+			json.NewDecoder(r.Body).Decode(&params)
+			id := m.genID("dst")
+			dest := &hookbasesdk.Destination{
+				ID:   id,
+				Name: params.Name,
+				URL:  params.URL,
+			}
+			if params.Type != nil {
+				dest.Type = *params.Type
+			} else {
+				dest.Type = hookbasesdk.DestinationHTTP
+			}
+			if params.FieldMapping != nil {
+				dest.FieldMapping = params.FieldMapping
+			}
+			if params.Config != nil {
+				raw, _ := json.Marshal(params.Config)
+				dest.Config = raw
+			}
+			m.destinations[id] = dest
+			w.WriteHeader(http.StatusCreated)
+			json.NewEncoder(w).Encode(map[string]interface{}{"destination": dest})
+		case "GET":
+			var list []*hookbasesdk.Destination
+			for _, d := range m.destinations {
+				list = append(list, d)
+			}
+			json.NewEncoder(w).Encode(map[string]interface{}{"destinations": list, "total": len(list)})
+		}
+		return
+	}
+
+	id := path[len("/api/destinations/"):]
+	switch r.Method {
+	case "GET":
+		dest, ok := m.destinations[id]
+		if !ok {
+			w.WriteHeader(http.StatusNotFound)
+			json.NewEncoder(w).Encode(map[string]interface{}{"error": "not found"})
+			return
+		}
+		json.NewEncoder(w).Encode(map[string]interface{}{"destination": dest})
+	case "PATCH":
+		dest, ok := m.destinations[id]
+		if !ok {
+			w.WriteHeader(http.StatusNotFound)
+			json.NewEncoder(w).Encode(map[string]interface{}{"error": "not found"})
+			return
+		}
+		var params map[string]interface{}
+		json.NewDecoder(r.Body).Decode(&params)
+		if name, ok := params["name"].(string); ok {
+			dest.Name = name
+		}
+		json.NewEncoder(w).Encode(map[string]interface{}{"destination": dest})
+	case "DELETE":
+		if _, ok := m.destinations[id]; !ok {
+			w.WriteHeader(http.StatusNotFound)
+			json.NewEncoder(w).Encode(map[string]interface{}{"error": "not found"})
+			return
+		}
+		delete(m.destinations, id)
 		w.WriteHeader(http.StatusNoContent)
 	}
 }
@@ -450,6 +536,136 @@ func TestWebhookRouteDeepCopy(t *testing.T) {
 	route.Spec.FailoverDestinationRefs[0] = "modified"
 	if copied.Spec.FailoverDestinationRefs[0] == "modified" {
 		t.Error("DeepCopy did not create independent copy of failover refs")
+	}
+}
+
+func TestSDKDestinationCreateHTTP(t *testing.T) {
+	mock := newMockAPI()
+	server := httptest.NewServer(mock.handler())
+	defer server.Close()
+
+	client := hookbasesdk.New("test-api-key", hookbasesdk.WithBaseURL(server.URL))
+	ctx := context.Background()
+
+	method := hookbasesdk.HTTPPost
+	dest, err := client.Destinations.Create(ctx, &hookbasesdk.CreateDestinationParams{
+		Name:   "My HTTP Endpoint",
+		URL:    "https://api.example.com/webhooks",
+		Method: &method,
+	})
+	if err != nil {
+		t.Fatalf("Create failed: %v", err)
+	}
+
+	if dest.ID == "" {
+		t.Error("expected destination ID to be set")
+	}
+	if dest.Name != "My HTTP Endpoint" {
+		t.Errorf("expected name 'My HTTP Endpoint', got %q", dest.Name)
+	}
+	if dest.Type != hookbasesdk.DestinationHTTP {
+		t.Errorf("expected type http, got %q", dest.Type)
+	}
+
+	reqs := mock.getRequests()
+	if len(reqs) == 0 {
+		t.Fatal("expected at least one API request")
+	}
+	if reqs[0].Method != "POST" {
+		t.Errorf("expected POST request, got %s", reqs[0].Method)
+	}
+}
+
+func TestSDKDestinationCreateWarehouse(t *testing.T) {
+	mock := newMockAPI()
+	server := httptest.NewServer(mock.handler())
+	defer server.Close()
+
+	client := hookbasesdk.New("test-api-key", hookbasesdk.WithBaseURL(server.URL))
+	ctx := context.Background()
+
+	s3Type := hookbasesdk.DestinationS3
+	dest, err := client.Destinations.Create(ctx, &hookbasesdk.CreateDestinationParams{
+		Name: "S3 Warehouse",
+		Type: &s3Type,
+		Config: map[string]interface{}{
+			"bucket":          "my-webhook-data",
+			"region":          "us-east-1",
+			"accessKeyId":     "AKIA...",
+			"secretAccessKey": "secret...",
+			"prefix":          "webhooks/",
+		},
+		FieldMapping: []hookbasesdk.FieldMapping{
+			{Source: "$.id", Target: "event_id", Type: "string"},
+			{Source: "$.body", Target: "payload", Type: "json"},
+			{Source: "$.timestamp", Target: "received_at", Type: "timestamp", Default: "now()"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Create failed: %v", err)
+	}
+
+	if dest.ID == "" {
+		t.Error("expected destination ID to be set")
+	}
+	if dest.Type != hookbasesdk.DestinationS3 {
+		t.Errorf("expected type s3, got %q", dest.Type)
+	}
+	if len(dest.FieldMapping) != 3 {
+		t.Errorf("expected 3 field mappings, got %d", len(dest.FieldMapping))
+	}
+	if dest.FieldMapping[0].Source != "$.id" {
+		t.Errorf("expected first mapping source '$.id', got %q", dest.FieldMapping[0].Source)
+	}
+}
+
+func TestWebhookDestinationDeepCopy(t *testing.T) {
+	dest := &hookbasev1alpha1.WebhookDestination{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-dest",
+			Namespace: "default",
+		},
+		Spec: hookbasev1alpha1.WebhookDestinationSpec{
+			Name: "Test Dest",
+			Type: "s3",
+			ConfigSecretRef: &hookbasev1alpha1.SecretKeyRef{
+				Name: "s3-creds",
+				Key:  "config",
+			},
+			FieldMapping: []hookbasev1alpha1.FieldMappingSpec{
+				{Source: "$.id", Target: "event_id", Type: "string"},
+				{Source: "$.body", Target: "payload", Type: "json"},
+			},
+		},
+		Status: hookbasev1alpha1.WebhookDestinationStatus{
+			DestinationID: "dst_123",
+		},
+	}
+
+	copied := dest.DeepCopy()
+
+	if copied.Spec.Name != "Test Dest" {
+		t.Error("spec not copied")
+	}
+	if copied.Spec.Type != "s3" {
+		t.Error("type not copied")
+	}
+	if copied.Spec.ConfigSecretRef == nil || copied.Spec.ConfigSecretRef.Name != "s3-creds" {
+		t.Error("configSecretRef not copied")
+	}
+	if len(copied.Spec.FieldMapping) != 2 {
+		t.Errorf("expected 2 field mappings, got %d", len(copied.Spec.FieldMapping))
+	}
+
+	// Modify original — copy should be unchanged
+	dest.Spec.FieldMapping[0].Source = "modified"
+	if copied.Spec.FieldMapping[0].Source == "modified" {
+		t.Error("DeepCopy did not create independent copy of FieldMapping slice")
+	}
+
+	dest.Spec.ConfigSecretRef.Name = "modified"
+	if copied.Spec.ConfigSecretRef.Name == "modified" {
+		t.Error("DeepCopy did not create independent copy of ConfigSecretRef")
 	}
 }
 

@@ -21,6 +21,7 @@ spec:
         status: {}
       additionalPrinterColumns:
         - {name: Destination ID, type: string, jsonPath: .status.destinationId}
+        - {name: Type, type: string, jsonPath: .spec.type}
         - {name: URL, type: string, jsonPath: .spec.url}
         - {name: Ready, type: string, jsonPath: ".status.conditions[?(@.type==\"Ready\")].status"}
         - {name: Age, type: date, jsonPath: .metadata.creationTimestamp}
@@ -33,19 +34,34 @@ spec:
             metadata: {type: object}
             spec:
               type: object
-              required: [name, url]
+              required: [name]
               properties:
                 name: {type: string}
                 slug: {type: string}
                 description: {type: string}
+                type: {type: string, default: http, enum: [http, s3, r2, gcs, azure_blob]}
                 url: {type: string}
                 method: {type: string, default: POST, enum: [GET, POST, PUT, PATCH, DELETE]}
                 headers: {type: object, additionalProperties: {type: string}}
                 authType: {type: string, enum: [none, basic, bearer, api_key, custom_header]}
                 authSecretRef: {type: object, properties: {name: {type: string}, key: {type: string}}}
+                configSecretRef: {type: object, properties: {name: {type: string}, key: {type: string}}}
+                fieldMapping:
+                  type: array
+                  items:
+                    type: object
+                    required: [source, target, type]
+                    properties:
+                      source: {type: string}
+                      target: {type: string}
+                      type: {type: string, enum: [string, number, boolean, timestamp, json]}
+                      default: {type: string}
                 timeoutMs: {type: integer}
                 retryCount: {type: integer}
                 rateLimitPerMinute: {type: integer}
+                useStaticIp: {type: boolean}
+                batchSize: {type: integer}
+                batchWindowSeconds: {type: integer}
                 apiKeyRef: {type: object, properties: {name: {type: string}, key: {type: string}}}
             status:
               type: object

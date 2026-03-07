@@ -31,6 +31,8 @@ func (v *HookbaseValidator) Handle(ctx context.Context, req admission.Request) a
 	switch req.Kind.Kind {
 	case "WebhookSource":
 		return v.validateWebhookSource(ctx, req)
+	case "WebhookDestination":
+		return v.validateWebhookDestination(ctx, req)
 	case "WebhookRoute":
 		return v.validateWebhookRoute(ctx, req)
 	default:
@@ -65,6 +67,44 @@ func (v *HookbaseValidator) validateWebhookSource(ctx context.Context, req admis
 		if _, _, err := net.ParseCIDR(cidr); err != nil {
 			return admission.Denied(fmt.Sprintf("invalid CIDR in ipDenylist: %q: %v", cidr, err))
 		}
+	}
+
+	return admission.Allowed("")
+}
+
+func (v *HookbaseValidator) validateWebhookDestination(ctx context.Context, req admission.Request) admission.Response {
+	dest := &hookbasev1alpha1.WebhookDestination{}
+	if err := v.decoder.Decode(req, dest); err != nil {
+		return admission.Errored(http.StatusBadRequest, err)
+	}
+
+	// Slug immutability check on UPDATE
+	if req.OldObject.Raw != nil {
+		oldDest := &hookbasev1alpha1.WebhookDestination{}
+		if err := v.decoder.DecodeRaw(req.OldObject, oldDest); err != nil {
+			return admission.Errored(http.StatusBadRequest, err)
+		}
+		if oldDest.Spec.Slug != "" && dest.Spec.Slug != oldDest.Spec.Slug {
+			return admission.Denied("spec.slug is immutable after creation")
+		}
+	}
+
+	destType := dest.Spec.Type
+	if destType == "" {
+		destType = "http"
+	}
+
+	switch destType {
+	case "http":
+		if dest.Spec.URL == "" {
+			return admission.Denied("spec.url is required for HTTP destinations")
+		}
+	case "s3", "r2", "gcs", "azure_blob":
+		if dest.Spec.ConfigSecretRef == nil {
+			return admission.Denied(fmt.Sprintf("spec.configSecretRef is required for %s destinations", destType))
+		}
+	default:
+		return admission.Denied(fmt.Sprintf("unsupported destination type: %q", destType))
 	}
 
 	return admission.Allowed("")

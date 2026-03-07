@@ -73,7 +73,7 @@ github.com/google/gofuzz/bytesource
 # github.com/google/uuid v1.6.0
 ## explicit
 github.com/google/uuid
-# github.com/hookbase/hookbase-go v0.1.0 => ../sdk/go-sdk
+# github.com/hookbase/hookbase-go v0.2.0 => ../sdk/go-sdk
 ## explicit; go 1.21
 github.com/hookbase/hookbase-go
 # github.com/imdario/mergo v0.3.6

@@ -3,7 +3,7 @@ module github.com/hookbase/hookbase-operator
 go 1.23
 
 require (
-	github.com/hookbase/hookbase-go v0.1.0
+	github.com/hookbase/hookbase-go v0.2.0
 	github.com/prometheus/client_golang v1.20.5
 	k8s.io/api v0.31.0
 	k8s.io/apimachinery v0.31.0

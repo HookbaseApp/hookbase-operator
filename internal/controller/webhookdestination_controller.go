@@ -99,24 +99,58 @@ func (r *WebhookDestinationReconciler) Reconcile(ctx context.Context, req ctrl.R
 	}
 	authType := hookbasesdk.AuthType(dest.Spec.AuthType)
 
+	// Resolve warehouse config from Secret if needed
+	var warehouseConfig map[string]interface{}
+	destType := dest.Spec.Type
+	if destType == "" {
+		destType = "http"
+	}
+	isWarehouse := destType != "http"
+	if isWarehouse && dest.Spec.ConfigSecretRef != nil {
+		warehouseConfig, err = r.resolveWarehouseConfig(ctx, dest.Namespace, dest.Spec.ConfigSecretRef)
+		if err != nil {
+			hookbasev1alpha1.SetCondition(&dest.Status.Conditions, hookbasev1alpha1.ConditionReady,
+				metav1.ConditionFalse, "ConfigSecretError", err.Error(), dest.Generation)
+			_ = r.Status().Update(ctx, &dest)
+			return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
+		}
+	}
+
+	// Convert field mappings
+	var sdkFieldMappings []hookbasesdk.FieldMapping
+	if len(dest.Spec.FieldMapping) > 0 {
+		sdkFieldMappings = toSDKFieldMappings(dest.Spec.FieldMapping)
+	}
+
 	if dest.Status.DestinationID == "" {
 		// CREATE
 		params := &hookbasesdk.CreateDestinationParams{
-			Name:       dest.Spec.Name,
-			URL:        dest.Spec.URL,
-			Method:     &method,
-			Headers:    dest.Spec.Headers,
-			AuthType:   &authType,
-			AuthConfig: authConfig,
-			Timeout:    dest.Spec.TimeoutMs,
-			RetryCount: dest.Spec.RetryCount,
-			RateLimit:  dest.Spec.RateLimitPerMinute,
+			Name:               dest.Spec.Name,
+			URL:                dest.Spec.URL,
+			Method:             &method,
+			Headers:            dest.Spec.Headers,
+			AuthType:           &authType,
+			AuthConfig:         authConfig,
+			Timeout:            dest.Spec.TimeoutMs,
+			RetryCount:         dest.Spec.RetryCount,
+			RateLimit:          dest.Spec.RateLimitPerMinute,
+			UseStaticIP:        dest.Spec.UseStaticIP,
+			BatchSize:          dest.Spec.BatchSize,
+			BatchWindowSeconds: dest.Spec.BatchWindowSeconds,
 		}
 		if dest.Spec.Slug != "" {
 			params.Slug = &dest.Spec.Slug
 		}
 		if dest.Spec.Description != "" {
 			params.Description = &dest.Spec.Description
+		}
+		if isWarehouse {
+			dt := hookbasesdk.DestinationType(destType)
+			params.Type = &dt
+			params.Config = warehouseConfig
+		}
+		if len(sdkFieldMappings) > 0 {
+			params.FieldMapping = sdkFieldMappings
 		}
 
 		apiDest, err := sdkClient.Destinations.Create(ctx, params)
@@ -133,18 +167,27 @@ func (r *WebhookDestinationReconciler) Reconcile(ctx context.Context, req ctrl.R
 	} else {
 		// UPDATE
 		params := &hookbasesdk.UpdateDestinationParams{
-			Name:       &dest.Spec.Name,
-			URL:        &dest.Spec.URL,
-			Method:     &method,
-			Headers:    dest.Spec.Headers,
-			AuthType:   &authType,
-			AuthConfig: authConfig,
-			Timeout:    dest.Spec.TimeoutMs,
-			RetryCount: dest.Spec.RetryCount,
-			RateLimit:  dest.Spec.RateLimitPerMinute,
+			Name:               &dest.Spec.Name,
+			URL:                &dest.Spec.URL,
+			Method:             &method,
+			Headers:            dest.Spec.Headers,
+			AuthType:           &authType,
+			AuthConfig:         authConfig,
+			Timeout:            dest.Spec.TimeoutMs,
+			RetryCount:         dest.Spec.RetryCount,
+			RateLimit:          dest.Spec.RateLimitPerMinute,
+			UseStaticIP:        dest.Spec.UseStaticIP,
+			BatchSize:          dest.Spec.BatchSize,
+			BatchWindowSeconds: dest.Spec.BatchWindowSeconds,
 		}
 		if dest.Spec.Description != "" {
 			params.Description = &dest.Spec.Description
+		}
+		if isWarehouse {
+			params.Config = warehouseConfig
+		}
+		if len(sdkFieldMappings) > 0 {
+			params.FieldMapping = sdkFieldMappings
 		}
 
 		if err := sdkClient.Destinations.Update(ctx, dest.Status.DestinationID, params); err != nil {
@@ -210,6 +253,32 @@ func (r *WebhookDestinationReconciler) resolveAuthConfig(ctx context.Context, na
 		}
 	}
 	return config, nil
+}
+
+func (r *WebhookDestinationReconciler) resolveWarehouseConfig(ctx context.Context, namespace string, ref *hookbasev1alpha1.SecretKeyRef) (map[string]interface{}, error) {
+	var secret corev1.Secret
+	if err := r.Get(ctx, client.ObjectKey{Namespace: namespace, Name: ref.Name}, &secret); err != nil {
+		return nil, fmt.Errorf("failed to get config secret %s: %w", ref.Name, err)
+	}
+
+	config := make(map[string]interface{}, len(secret.Data))
+	for k, v := range secret.Data {
+		config[k] = string(v)
+	}
+	return config, nil
+}
+
+func toSDKFieldMappings(specs []hookbasev1alpha1.FieldMappingSpec) []hookbasesdk.FieldMapping {
+	mappings := make([]hookbasesdk.FieldMapping, len(specs))
+	for i, s := range specs {
+		mappings[i] = hookbasesdk.FieldMapping{
+			Source:  s.Source,
+			Target:  s.Target,
+			Type:    s.Type,
+			Default: s.Default,
+		}
+	}
+	return mappings
 }
 
 func (r *WebhookDestinationReconciler) SetupWithManager(mgr ctrl.Manager) error {

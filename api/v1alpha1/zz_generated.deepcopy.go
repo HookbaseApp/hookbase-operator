@@ -253,10 +253,32 @@ func (in *WebhookSourceList) DeepCopyObject() runtime.Object {
 	return nil
 }
 
+// --- FieldMappingSpec ---
+
+func (in *FieldMappingSpec) DeepCopyInto(out *FieldMappingSpec) {
+	*out = *in
+}
+
+func (in *FieldMappingSpec) DeepCopy() *FieldMappingSpec {
+	if in == nil {
+		return nil
+	}
+	out := new(FieldMappingSpec)
+	in.DeepCopyInto(out)
+	return out
+}
+
 // --- WebhookDestination ---
 
 func (in *WebhookDestinationSpec) DeepCopyInto(out *WebhookDestinationSpec) {
 	*out = *in
+	if in.ConfigSecretRef != nil {
+		out.ConfigSecretRef = in.ConfigSecretRef.DeepCopy()
+	}
+	if in.FieldMapping != nil {
+		out.FieldMapping = make([]FieldMappingSpec, len(in.FieldMapping))
+		copy(out.FieldMapping, in.FieldMapping)
+	}
 	if in.Headers != nil {
 		out.Headers = make(map[string]string, len(in.Headers))
 		for k, v := range in.Headers {

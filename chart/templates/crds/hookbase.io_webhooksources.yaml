@@ -88,6 +88,11 @@ spec:
                   type: integer
                 transientMode:
                   type: boolean
+                allowedMethods:
+                  type: array
+                  items:
+                    type: string
+                    enum: [GET, POST, PUT, PATCH, DELETE, HEAD]
                 apiKeyRef:
                   type: object
                   properties:

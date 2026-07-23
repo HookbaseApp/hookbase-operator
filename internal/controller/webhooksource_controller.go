@@ -127,6 +127,7 @@ func (r *WebhookSourceReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	}
 	createParams.IPAllowlist = source.Spec.IPAllowlist
 	createParams.IPDenylist = source.Spec.IPDenylist
+	createParams.AllowedMethods = source.Spec.AllowedMethods
 
 	// 6. Create or Update
 	if source.Status.SourceID == "" {
@@ -163,6 +164,7 @@ func (r *WebhookSourceReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 			RateLimit:       source.Spec.RateLimitPerMinute,
 			IPAllowlist:     source.Spec.IPAllowlist,
 			IPDenylist:      source.Spec.IPDenylist,
+			AllowedMethods:  source.Spec.AllowedMethods,
 		}
 		if source.Spec.Description != "" {
 			updateParams.Description = &source.Spec.Description

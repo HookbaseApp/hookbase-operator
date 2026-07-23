@@ -59,6 +59,13 @@ type WebhookSourceSpec struct {
 	// +optional
 	TransientMode *bool `json:"transientMode,omitempty"`
 
+	// AllowedMethods restricts which HTTP methods the ingest endpoint accepts.
+	// Omit or leave empty to accept any method. OPTIONS is excluded because CORS
+	// preflight is answered before ingest runs.
+	// +kubebuilder:validation:Enum=GET;POST;PUT;PATCH;DELETE;HEAD
+	// +optional
+	AllowedMethods []string `json:"allowedMethods,omitempty"`
+
 	// APIKeyRef references a HookbaseAPIKey or Secret for authentication.
 	// +optional
 	APIKeyRef *SecretKeyRef `json:"apiKeyRef,omitempty"`

@@ -16,3 +16,5 @@ spec:
   rateLimitPerMinute: 1000
   dedupStrategy: header
   dedupWindowHours: 24
+  # Restrict which HTTP verbs the ingest endpoint accepts. Omit to accept any method.
+  # allowedMethods: [POST]

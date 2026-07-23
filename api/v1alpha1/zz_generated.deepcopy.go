@@ -165,6 +165,10 @@ func (in *WebhookSourceSpec) DeepCopyInto(out *WebhookSourceSpec) {
 		out.TransientMode = new(bool)
 		*out.TransientMode = *in.TransientMode
 	}
+	if in.AllowedMethods != nil {
+		out.AllowedMethods = make([]string, len(in.AllowedMethods))
+		copy(out.AllowedMethods, in.AllowedMethods)
+	}
 	if in.APIKeyRef != nil {
 		out.APIKeyRef = in.APIKeyRef.DeepCopy()
 	}

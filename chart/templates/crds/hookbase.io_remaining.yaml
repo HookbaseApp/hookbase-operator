@@ -194,6 +194,7 @@ spec:
                 timezone: {type: string, default: UTC}
                 timeoutMs: {type: integer}
                 isActive: {type: boolean, default: true}
+                useStaticIp: {type: boolean}
                 notifications: {type: object, properties: {onFailure: {type: boolean}, onSuccess: {type: boolean}, onRecovery: {type: boolean}, emails: {type: string}}}
                 apiKeyRef: {type: object, properties: {name: {type: string}, key: {type: string}}}
             status:

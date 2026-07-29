@@ -103,12 +103,13 @@ func (r *HookbaseCronJobReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 
 	if cron.Status.CronJobID == "" {
 		params := &hookbasesdk.CreateCronParams{
-			Name:     cron.Spec.Name,
-			Schedule: cron.Spec.CronExpression,
-			URL:      cron.Spec.URL,
-			Method:   &method,
-			Headers:  cron.Spec.Headers,
-			IsActive: cron.Spec.IsActive,
+			Name:        cron.Spec.Name,
+			Schedule:    cron.Spec.CronExpression,
+			URL:         cron.Spec.URL,
+			Method:      &method,
+			Headers:     cron.Spec.Headers,
+			IsActive:    cron.Spec.IsActive,
+			UseStaticIP: cron.Spec.UseStaticIP,
 		}
 		if cron.Spec.Description != "" {
 			params.Description = &cron.Spec.Description
@@ -136,12 +137,13 @@ func (r *HookbaseCronJobReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 		log.Info("created cron job", "cronJobId", apiCron.ID)
 	} else {
 		params := &hookbasesdk.UpdateCronParams{
-			Name:     &cron.Spec.Name,
-			Schedule: &cron.Spec.CronExpression,
-			URL:      &cron.Spec.URL,
-			Method:   &method,
-			Headers:  cron.Spec.Headers,
-			IsActive: cron.Spec.IsActive,
+			Name:        &cron.Spec.Name,
+			Schedule:    &cron.Spec.CronExpression,
+			URL:         &cron.Spec.URL,
+			Method:      &method,
+			Headers:     cron.Spec.Headers,
+			IsActive:    cron.Spec.IsActive,
+			UseStaticIP: cron.Spec.UseStaticIP,
 		}
 		if cron.Spec.Description != "" {
 			params.Description = &cron.Spec.Description

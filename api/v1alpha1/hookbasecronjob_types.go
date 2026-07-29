@@ -51,6 +51,12 @@ type HookbaseCronJobSpec struct {
 	// +optional
 	IsActive *bool `json:"isActive,omitempty"`
 
+	// UseStaticIP routes this job's request through a dedicated proxy with a fixed egress
+	// IP address, so the target can allowlist it. Available on Pro and Business plans.
+	// Opt-in: defaults to false.
+	// +optional
+	UseStaticIP *bool `json:"useStaticIp,omitempty"`
+
 	// Notifications configures notifications for this cron job.
 	// +optional
 	Notifications *NotificationConfig `json:"notifications,omitempty"`

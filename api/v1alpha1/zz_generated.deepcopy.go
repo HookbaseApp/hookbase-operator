@@ -914,6 +914,10 @@ func (in *HookbaseCronJobSpec) DeepCopyInto(out *HookbaseCronJobSpec) {
 		out.IsActive = new(bool)
 		*out.IsActive = *in.IsActive
 	}
+	if in.UseStaticIP != nil {
+		out.UseStaticIP = new(bool)
+		*out.UseStaticIP = *in.UseStaticIP
+	}
 	if in.Notifications != nil {
 		out.Notifications = in.Notifications.DeepCopy()
 	}

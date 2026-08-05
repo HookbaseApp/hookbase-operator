@@ -58,7 +58,14 @@ spec:
                       default: {type: string}
                 timeoutMs: {type: integer}
                 retryCount: {type: integer}
-                rateLimitPerMinute: {type: integer}
+                throttle:
+                  type: object
+                  properties:
+                    mode: {type: string, enum: [off, rate, concurrency]}
+                    rateLimit: {type: integer}
+                    rateUnit: {type: string, enum: [second, minute, hour]}
+                    maxConcurrency: {type: integer}
+                    queueLimit: {type: integer}
                 useStaticIp: {type: boolean}
                 batchSize: {type: integer}
                 batchWindowSeconds: {type: integer}

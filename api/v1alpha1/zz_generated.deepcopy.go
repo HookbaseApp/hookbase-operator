@@ -272,6 +272,33 @@ func (in *FieldMappingSpec) DeepCopy() *FieldMappingSpec {
 	return out
 }
 
+// --- ThrottleSpec ---
+
+func (in *ThrottleSpec) DeepCopyInto(out *ThrottleSpec) {
+	*out = *in
+	if in.RateLimit != nil {
+		out.RateLimit = new(int)
+		*out.RateLimit = *in.RateLimit
+	}
+	if in.MaxConcurrency != nil {
+		out.MaxConcurrency = new(int)
+		*out.MaxConcurrency = *in.MaxConcurrency
+	}
+	if in.QueueLimit != nil {
+		out.QueueLimit = new(int)
+		*out.QueueLimit = *in.QueueLimit
+	}
+}
+
+func (in *ThrottleSpec) DeepCopy() *ThrottleSpec {
+	if in == nil {
+		return nil
+	}
+	out := new(ThrottleSpec)
+	in.DeepCopyInto(out)
+	return out
+}
+
 // --- WebhookDestination ---
 
 func (in *WebhookDestinationSpec) DeepCopyInto(out *WebhookDestinationSpec) {
@@ -300,9 +327,8 @@ func (in *WebhookDestinationSpec) DeepCopyInto(out *WebhookDestinationSpec) {
 		out.RetryCount = new(int)
 		*out.RetryCount = *in.RetryCount
 	}
-	if in.RateLimitPerMinute != nil {
-		out.RateLimitPerMinute = new(int)
-		*out.RateLimitPerMinute = *in.RateLimitPerMinute
+	if in.Throttle != nil {
+		out.Throttle = in.Throttle.DeepCopy()
 	}
 	if in.APIKeyRef != nil {
 		out.APIKeyRef = in.APIKeyRef.DeepCopy()

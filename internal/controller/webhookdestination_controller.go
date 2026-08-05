@@ -122,6 +122,8 @@ func (r *WebhookDestinationReconciler) Reconcile(ctx context.Context, req ctrl.R
 		sdkFieldMappings = toSDKFieldMappings(dest.Spec.FieldMapping)
 	}
 
+	sdkThrottle := toSDKThrottle(dest.Spec.Throttle)
+
 	if dest.Status.DestinationID == "" {
 		// CREATE
 		params := &hookbasesdk.CreateDestinationParams{
@@ -133,7 +135,7 @@ func (r *WebhookDestinationReconciler) Reconcile(ctx context.Context, req ctrl.R
 			AuthConfig:         authConfig,
 			Timeout:            dest.Spec.TimeoutMs,
 			RetryCount:         dest.Spec.RetryCount,
-			RateLimit:          dest.Spec.RateLimitPerMinute,
+			Throttle:           sdkThrottle,
 			UseStaticIP:        dest.Spec.UseStaticIP,
 			BatchSize:          dest.Spec.BatchSize,
 			BatchWindowSeconds: dest.Spec.BatchWindowSeconds,
@@ -175,7 +177,7 @@ func (r *WebhookDestinationReconciler) Reconcile(ctx context.Context, req ctrl.R
 			AuthConfig:         authConfig,
 			Timeout:            dest.Spec.TimeoutMs,
 			RetryCount:         dest.Spec.RetryCount,
-			RateLimit:          dest.Spec.RateLimitPerMinute,
+			Throttle:           sdkThrottle,
 			UseStaticIP:        dest.Spec.UseStaticIP,
 			BatchSize:          dest.Spec.BatchSize,
 			BatchWindowSeconds: dest.Spec.BatchWindowSeconds,
@@ -279,6 +281,26 @@ func toSDKFieldMappings(specs []hookbasev1alpha1.FieldMappingSpec) []hookbasesdk
 		}
 	}
 	return mappings
+}
+
+func toSDKThrottle(spec *hookbasev1alpha1.ThrottleSpec) *hookbasesdk.Throttle {
+	if spec == nil {
+		return nil
+	}
+	mode := spec.Mode
+	if mode == "" {
+		mode = "off"
+	}
+	throttle := &hookbasesdk.Throttle{
+		Mode:           mode,
+		RateLimit:      spec.RateLimit,
+		MaxConcurrency: spec.MaxConcurrency,
+		QueueLimit:     spec.QueueLimit,
+	}
+	if spec.RateUnit != "" {
+		throttle.RateUnit = &spec.RateUnit
+	}
+	return throttle
 }
 
 func (r *WebhookDestinationReconciler) SetupWithManager(mgr ctrl.Manager) error {

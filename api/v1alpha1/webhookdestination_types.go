@@ -19,6 +19,34 @@ type FieldMappingSpec struct {
 	Default string `json:"default,omitempty"`
 }
 
+// ThrottleSpec configures outbound delivery throttling for a destination.
+// When Mode is "rate", RateLimit and RateUnit are required. When Mode is
+// "concurrency", MaxConcurrency is required. QueueLimit is optional in both modes.
+type ThrottleSpec struct {
+	// Mode is the throttling strategy (off, rate, concurrency).
+	// +kubebuilder:default=off
+	// +kubebuilder:validation:Enum=off;rate;concurrency
+	// +optional
+	Mode string `json:"mode,omitempty"`
+
+	// RateLimit is the number of deliveries allowed per RateUnit. Required when Mode is "rate".
+	// +optional
+	RateLimit *int `json:"rateLimit,omitempty"`
+
+	// RateUnit is the time unit RateLimit applies to (second, minute, hour). Required when Mode is "rate".
+	// +kubebuilder:validation:Enum=second;minute;hour
+	// +optional
+	RateUnit string `json:"rateUnit,omitempty"`
+
+	// MaxConcurrency is the maximum number of concurrent deliveries. Required when Mode is "concurrency".
+	// +optional
+	MaxConcurrency *int `json:"maxConcurrency,omitempty"`
+
+	// QueueLimit is the maximum number of deliveries to queue while throttled.
+	// +optional
+	QueueLimit *int `json:"queueLimit,omitempty"`
+}
+
 // WebhookDestinationSpec defines the desired state of a webhook destination.
 type WebhookDestinationSpec struct {
 	// Name of the destination in Hookbase.
@@ -83,9 +111,9 @@ type WebhookDestinationSpec struct {
 	// +optional
 	RetryCount *int `json:"retryCount,omitempty"`
 
-	// RateLimitPerMinute sets the per-minute rate limit.
+	// Throttle configures outbound delivery throttling for this destination.
 	// +optional
-	RateLimitPerMinute *int `json:"rateLimitPerMinute,omitempty"`
+	Throttle *ThrottleSpec `json:"throttle,omitempty"`
 
 	// UseStaticIP enables static IP delivery, routing webhooks through a dedicated
 	// proxy with a fixed egress IP address. Available on Pro and Business plans.

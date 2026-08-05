@@ -86,6 +86,19 @@ type FieldMapping struct {
 	Default string `json:"default,omitempty"`
 }
 
+// Throttle configures outbound delivery throttling for a destination.
+//
+// Mode is one of "off", "rate", or "concurrency". When Mode is "rate",
+// RateLimit and RateUnit are required. When Mode is "concurrency",
+// MaxConcurrency is required. QueueLimit is optional in both modes.
+type Throttle struct {
+	Mode           string  `json:"mode"`
+	RateLimit      *int    `json:"rateLimit,omitempty"`
+	RateUnit       *string `json:"rateUnit,omitempty"`
+	MaxConcurrency *int    `json:"maxConcurrency,omitempty"`
+	QueueLimit     *int    `json:"queueLimit,omitempty"`
+}
+
 // Destination represents a webhook delivery destination.
 type Destination struct {
 	ID              string            `json:"id"`
@@ -102,8 +115,7 @@ type Destination struct {
 	Timeout         int               `json:"timeout"`
 	RetryCount      int               `json:"retryCount"`
 	RetryInterval   int               `json:"retryInterval"`
-	RateLimit       *int              `json:"rateLimit"`
-	RateLimitWindow *int              `json:"rateLimitWindow"`
+	Throttle        *Throttle         `json:"throttle,omitempty"`
 	IsActive        FlexBool          `json:"isActive"`
 	UseStaticIP     FlexBool          `json:"useStaticIp"`
 	Config             json.RawMessage   `json:"config"`
@@ -130,8 +142,7 @@ type CreateDestinationParams struct {
 	Timeout         *int                   `json:"timeout,omitempty"`
 	RetryCount      *int                   `json:"retryCount,omitempty"`
 	RetryInterval   *int                   `json:"retryInterval,omitempty"`
-	RateLimit       *int                   `json:"rateLimit,omitempty"`
-	RateLimitWindow *int                   `json:"rateLimitWindow,omitempty"`
+	Throttle           *Throttle              `json:"throttle,omitempty"`
 	Config             interface{}            `json:"config,omitempty"`
 	FieldMapping       []FieldMapping         `json:"fieldMapping,omitempty"`
 	UseStaticIP        *bool                  `json:"useStaticIp,omitempty"`
@@ -151,8 +162,7 @@ type UpdateDestinationParams struct {
 	Timeout         *int                   `json:"timeout,omitempty"`
 	RetryCount      *int                   `json:"retryCount,omitempty"`
 	RetryInterval   *int                   `json:"retryInterval,omitempty"`
-	RateLimit       *int                   `json:"rateLimit,omitempty"`
-	RateLimitWindow *int                   `json:"rateLimitWindow,omitempty"`
+	Throttle           *Throttle              `json:"throttle,omitempty"`
 	IsActive        *bool                  `json:"isActive,omitempty"`
 	Config             interface{}            `json:"config,omitempty"`
 	FieldMapping       []FieldMapping         `json:"fieldMapping,omitempty"`

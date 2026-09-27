@@ -11,7 +11,12 @@ type HookbaseAPIKeySpec struct {
 	// +optional
 	Scopes []string `json:"scopes,omitempty"`
 
-	// ExpiresInDays is the number of days until the key expires.
+	// ExpiresInDays is the number of days until the key expires. Defaults to never.
+	//
+	// Days, not seconds, is deliberate: this is the unit users write in their manifests, and it
+	// matches expiresInDays on portal tokens. The API reads expiresIn in SECONDS, and the Go SDK
+	// converts on the way out (CreateAPIKeyParams.MarshalJSON). Do not "correct" this field to
+	// seconds -- that would silently change the meaning of every existing HookbaseAPIKey manifest.
 	// +optional
 	ExpiresInDays *int `json:"expiresInDays,omitempty"`
 

@@ -16,7 +16,10 @@ import (
 	"time"
 )
 
-const sdkVersion = "0.2.0"
+// sdkVersion is reported in the User-Agent. It must be bumped with the release tag: it sat at
+// 1.5.0 through v1.6.0, v1.7.0 and v1.8.0, so those releases all identified themselves to the
+// API as 1.5.0.
+const sdkVersion = "1.10.0"
 
 type transport struct {
 	apiKey     string
@@ -174,27 +177,27 @@ func (t *transport) backoff(attempt int) {
 
 func (t *transport) mapError(status int, body []byte, requestID string, headers http.Header) error {
 	var errBody struct {
-		Error struct {
-			Message          string              `json:"message"`
-			Code             string              `json:"code"`
-			ValidationErrors map[string][]string `json:"validationErrors"`
-		} `json:"error"`
+		Error   string `json:"error"`
 		Message string `json:"message"`
 		Code    string `json:"code"`
+		Details struct {
+			FormErrors  []string            `json:"formErrors"`
+			FieldErrors map[string][]string `json:"fieldErrors"`
+		} `json:"details"`
 	}
-	json.Unmarshal(body, &errBody)
+	unmarshalErr := json.Unmarshal(body, &errBody)
 
-	msg := errBody.Error.Message
-	if msg == "" {
-		msg = errBody.Message
+	msg := ""
+	code := ""
+	if unmarshalErr == nil {
+		msg = errBody.Error
+		if msg == "" {
+			msg = errBody.Message
+		}
+		code = errBody.Code
 	}
 	if msg == "" {
 		msg = fmt.Sprintf("API error: %d", status)
-	}
-
-	code := errBody.Error.Code
-	if code == "" {
-		code = errBody.Code
 	}
 	if code == "" {
 		code = "unknown_error"
@@ -205,6 +208,12 @@ func (t *transport) mapError(status int, body []byte, requestID string, headers 
 		Status:    status,
 		Code:      code,
 		RequestID: requestID,
+	}
+	if unmarshalErr == nil {
+		base.Details = &ErrorDetails{
+			FormErrors:  errBody.Details.FormErrors,
+			FieldErrors: errBody.Details.FieldErrors,
+		}
 	}
 
 	switch status {
@@ -217,7 +226,7 @@ func (t *transport) mapError(status int, body []byte, requestID string, headers 
 	case 400, 422:
 		return &ValidationError{
 			APIError:         base,
-			ValidationErrors: errBody.Error.ValidationErrors,
+			ValidationErrors: errBody.Details.FieldErrors,
 		}
 	case 429:
 		retryAfter := 60

@@ -220,7 +220,7 @@ Annotations control behavior:
 metadata:
   annotations:
     hookbase.io/source-provider: "stripe"
-    hookbase.io/source-verify-signature: "true"
+    hookbase.io/source-reject-invalid-signatures: "true"  # legacy name hookbase.io/source-verify-signature still accepted
     hookbase.io/source-signing-secret-ref: "stripe-secret:key"
     hookbase.io/route-transform-ref: "my-transform"
 ```
@@ -344,7 +344,7 @@ spec:
   name: GitHub Webhooks
   slug: github-webhooks
   provider: github
-  verifySignature: true
+  rejectInvalidSignatures: true
   signingSecretRef:
     name: github-webhook-secret
     key: secret

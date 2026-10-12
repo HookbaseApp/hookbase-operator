@@ -52,8 +52,12 @@ spec:
               properties:
                 name:
                   type: string
+                  minLength: 1
+                  maxLength: 100
                 slug:
                   type: string
+                  maxLength: 50
+                  pattern: '^[a-z0-9-]+$'
                 provider:
                   type: string
                   default: generic
@@ -61,18 +65,32 @@ spec:
                   type: string
                 signingSecretRef:
                   type: object
+                  required: [name]
                   properties:
                     name:
                       type: string
                     key:
                       type: string
+                verifyTokenRef:
+                  type: object
+                  required: [name]
+                  properties:
+                    name:
+                      type: string
+                    key:
+                      type: string
+                rejectInvalidSignatures:
+                  type: boolean
                 verifySignature:
                   type: boolean
+                  description: "Deprecated: use rejectInvalidSignatures. Honoured only when rejectInvalidSignatures is unset."
                 rateLimitPerMinute:
                   type: integer
+                  minimum: 1
+                  maximum: 100000
                 ipFilterMode:
                   type: string
-                  enum: [none, allowlist, denylist]
+                  enum: [none, allowlist, denylist, both]
                 ipAllowlist:
                   type: array
                   items:
@@ -83,9 +101,11 @@ spec:
                     type: string
                 dedupStrategy:
                   type: string
-                  enum: [none, header, payload_hash, event_id]
+                  enum: [auto, provider_id, payload_hash, idempotency_key, none]
                 dedupWindowHours:
                   type: integer
+                  minimum: 1
+                  maximum: 168
                 transientMode:
                   type: boolean
                 allowedMethods:
@@ -106,6 +126,18 @@ spec:
                 sourceId:
                   type: string
                 ingestUrl:
+                  type: string
+                provider:
+                  type: string
+                hasSigningSecret:
+                  type: boolean
+                verifiesWithoutSecret:
+                  type: boolean
+                awaitingSigningSecret:
+                  type: boolean
+                signingSecretRefVersion:
+                  type: string
+                verifyTokenRefVersion:
                   type: string
                 observedGeneration:
                   type: integer

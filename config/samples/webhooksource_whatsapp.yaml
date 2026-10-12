@@ -1,0 +1,19 @@
+apiVersion: hookbase.io/v1alpha1
+kind: WebhookSource
+metadata:
+  name: whatsapp-webhooks
+spec:
+  name: WhatsApp Webhooks
+  slug: whatsapp-webhooks
+  provider: whatsapp
+  rejectInvalidSignatures: true
+  # The Meta App Secret signs deliveries; paste it from the Meta app dashboard.
+  signingSecretRef:
+    name: whatsapp-app-secret
+    key: appSecret
+  # Optional: the verify token Meta checks when the callback URL is registered. Omit it and
+  # Hookbase generates one, stored in the operator-owned Secret "whatsapp-webhooks-signing-secret"
+  # under key "verifyToken" -- paste that into Meta's webhook setup.
+  # verifyTokenRef:
+  #   name: whatsapp-verify-token
+  #   key: verifyToken

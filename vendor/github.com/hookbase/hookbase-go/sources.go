@@ -2,35 +2,139 @@ package hookbase
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"net/url"
 )
 
 // SourceProvider represents the type of webhook provider.
+//
+// It is an open string type: the API accepts exactly the values in SUPPORTED_SIGNATURE_PROVIDERS
+// (api/src/utils/signature-schemes.ts) and answers anything else with a 400 that names the
+// problem, so a provider added server-side after this release can be used as
+// SourceProvider("new-id") without waiting for an SDK update. The constants below are the 78
+// values the API accepted when this version was cut. Regenerate them with
+// `npx tsx scripts/print-source-enums.ts` in the api package rather than hand-adding one.
+//
+// SendGrid, Mailgun and Linear were dropped in the 2026-09 correction because the API did not
+// accept them then; it does now, with real verification schemes, so all three are back (note the
+// spelling, SourceProviderSendgrid, which matches the generator rather than the old SendGrid).
+//
+// Several values are aliases that resolve to another scheme server-side: svix, clerk, resend,
+// render, etsy and stytch verify as standard-webhooks, and generic as custom. They are kept
+// because they are the names those senders are known by.
+//
+// The provider decides what, if anything, goes in the signing secret; see the Providers catalog
+// (client.Providers.Get) and its SignatureVerification.SecretSource:
+//
+//   - provider: the vendor issues the secret and it must be pasted. Several (standard-webhooks, svix,
+//     clerk, resend, airtable, gitlab-signing-token, supabase-auth-hooks, jira, and the discord
+//     and sendgrid public keys) are required on create and format-checked, both as a 400.
+//   - operator: Hookbase generates one when SigningSecret is omitted and returns it once on Create.
+//   - public_key: paste the vendor's public key.
+//   - built_in: wise, wise-sandbox and aws-sns verify against a key Hookbase already has. Sending
+//     any SigningSecret is a 400, Create returns no secret, and VerifiesWithoutSecret is true.
+//   - none: the vendor does not sign; a secret may still be set for custom HMAC.
+//
+// asana and notion issue their secret only after the URL is registered with them: Create returns
+// no secret and AwaitingSigningSecret is true until one is set (for notion, see
+// GetPendingVerification and AdoptPendingVerification). whatsapp also carries a verify token; see
+// CreateSourceParams.VerifyToken.
 type SourceProvider string
 
 const (
-	SourceProviderGeneric  SourceProvider = "generic"
-	SourceProviderGitHub   SourceProvider = "github"
-	SourceProviderStripe   SourceProvider = "stripe"
-	SourceProviderShopify  SourceProvider = "shopify"
-	SourceProviderSlack    SourceProvider = "slack"
-	SourceProviderTwilio   SourceProvider = "twilio"
-	SourceProviderSendGrid SourceProvider = "sendgrid"
-	SourceProviderMailgun  SourceProvider = "mailgun"
-	SourceProviderPaddle   SourceProvider = "paddle"
-	SourceProviderLinear   SourceProvider = "linear"
-	SourceProviderSvix     SourceProvider = "svix"
-	SourceProviderCustom   SourceProvider = "custom"
+	SourceProviderAdyen                  SourceProvider = "adyen"
+	SourceProviderAirtable               SourceProvider = "airtable"
+	SourceProviderAsana                  SourceProvider = "asana"
+	SourceProviderAuth0                  SourceProvider = "auth0"
+	SourceProviderAwsSns                 SourceProvider = "aws-sns"
+	SourceProviderBigcommerce            SourceProvider = "bigcommerce"
+	SourceProviderBitbucket              SourceProvider = "bitbucket"
+	SourceProviderBraintree              SourceProvider = "braintree"
+	SourceProviderCalendly               SourceProvider = "calendly"
+	SourceProviderChargebee              SourceProvider = "chargebee"
+	SourceProviderCircleci               SourceProvider = "circleci"
+	SourceProviderClerk                  SourceProvider = "clerk"
+	SourceProviderClickup                SourceProvider = "clickup"
+	SourceProviderCloudflare             SourceProvider = "cloudflare"
+	SourceProviderCoinbaseCommerce       SourceProvider = "coinbase-commerce"
+	SourceProviderCustom                 SourceProvider = "custom"
+	SourceProviderDatadog                SourceProvider = "datadog"
+	SourceProviderDiscord                SourceProvider = "discord"
+	SourceProviderDocusign               SourceProvider = "docusign"
+	SourceProviderEtsy                   SourceProvider = "etsy"
+	SourceProviderFreshdesk              SourceProvider = "freshdesk"
+	SourceProviderGeneric                SourceProvider = "generic"
+	SourceProviderGitHub                 SourceProvider = "github"
+	SourceProviderGitLab                 SourceProvider = "gitlab"
+	SourceProviderGitLabSigningToken     SourceProvider = "gitlab-signing-token"
+	SourceProviderGocardless             SourceProvider = "gocardless"
+	SourceProviderGrafana                SourceProvider = "grafana"
+	SourceProviderGrafanaHmac            SourceProvider = "grafana-hmac"
+	SourceProviderGrafanaHmacTimestamped SourceProvider = "grafana-hmac-timestamped"
+	SourceProviderHeroku                 SourceProvider = "heroku"
+	SourceProviderHubspot                SourceProvider = "hubspot"
+	SourceProviderIntercom               SourceProvider = "intercom"
+	SourceProviderJira                   SourceProvider = "jira"
+	SourceProviderKlaviyo                SourceProvider = "klaviyo"
+	SourceProviderLaunchdarkly           SourceProvider = "launchdarkly"
+	SourceProviderLemonSqueezy           SourceProvider = "lemonsqueezy"
+	SourceProviderLinear                 SourceProvider = "linear"
+	SourceProviderMailchimp              SourceProvider = "mailchimp"
+	SourceProviderMailgun                SourceProvider = "mailgun"
+	SourceProviderMollie                 SourceProvider = "mollie"
+	SourceProviderNetlify                SourceProvider = "netlify"
+	SourceProviderNewrelic               SourceProvider = "newrelic"
+	SourceProviderNotion                 SourceProvider = "notion"
+	SourceProviderOkta                   SourceProvider = "okta"
+	SourceProviderPaddle                 SourceProvider = "paddle"
+	SourceProviderPagerduty              SourceProvider = "pagerduty"
+	SourceProviderPaypal                 SourceProvider = "paypal"
+	SourceProviderPipedrive              SourceProvider = "pipedrive"
+	SourceProviderPostmark               SourceProvider = "postmark"
+	SourceProviderRailway                SourceProvider = "railway"
+	SourceProviderRazorpay               SourceProvider = "razorpay"
+	SourceProviderRender                 SourceProvider = "render"
+	SourceProviderResend                 SourceProvider = "resend"
+	SourceProviderSegment                SourceProvider = "segment"
+	SourceProviderSendgrid               SourceProvider = "sendgrid"
+	SourceProviderSentry                 SourceProvider = "sentry"
+	SourceProviderShopify                SourceProvider = "shopify"
+	SourceProviderSlack                  SourceProvider = "slack"
+	SourceProviderSquare                 SourceProvider = "square"
+	SourceProviderStandardWebhooks       SourceProvider = "standard-webhooks"
+	SourceProviderStripe                 SourceProvider = "stripe"
+	SourceProviderStytch                 SourceProvider = "stytch"
+	SourceProviderSupabase               SourceProvider = "supabase"
+	SourceProviderSupabaseAuthHooks      SourceProvider = "supabase-auth-hooks"
+	SourceProviderSvix                   SourceProvider = "svix"
+	SourceProviderTelegram               SourceProvider = "telegram"
+	SourceProviderTerraformCloud         SourceProvider = "terraform-cloud"
+	SourceProviderTrello                 SourceProvider = "trello"
+	SourceProviderTwilio                 SourceProvider = "twilio"
+	SourceProviderTypeform               SourceProvider = "typeform"
+	SourceProviderVercel                 SourceProvider = "vercel"
+	SourceProviderWhatsapp               SourceProvider = "whatsapp"
+	SourceProviderWise                   SourceProvider = "wise"
+	SourceProviderWiseSandbox            SourceProvider = "wise-sandbox"
+	SourceProviderWoocommerce            SourceProvider = "woocommerce"
+	SourceProviderWorkOS                 SourceProvider = "workos"
+	SourceProviderZendesk                SourceProvider = "zendesk"
+	SourceProviderZoom                   SourceProvider = "zoom"
 )
 
 // DedupStrategy represents the deduplication strategy.
 type DedupStrategy string
 
+// Corrected alongside SourceProvider: DedupHeader and DedupEventID were never accepted by the
+// API, and the three values it actually defaults to and documents were missing. DedupAuto is
+// the server-side default.
 const (
-	DedupNone        DedupStrategy = "none"
-	DedupHeader      DedupStrategy = "header"
-	DedupPayloadHash DedupStrategy = "payload_hash"
-	DedupEventID     DedupStrategy = "event_id"
+	DedupAuto           DedupStrategy = "auto"
+	DedupProviderID     DedupStrategy = "provider_id"
+	DedupPayloadHash    DedupStrategy = "payload_hash"
+	DedupIdempotencyKey DedupStrategy = "idempotency_key"
+	DedupNone           DedupStrategy = "none"
 )
 
 // IPFilterMode represents the IP filter mode.
@@ -40,75 +144,235 @@ const (
 	IPFilterNone      IPFilterMode = "none"
 	IPFilterAllowlist IPFilterMode = "allowlist"
 	IPFilterDenylist  IPFilterMode = "denylist"
+	IPFilterBoth      IPFilterMode = "both"
 )
 
-// Source represents an inbound webhook source.
+// Source represents an inbound webhook source as the API returns it.
+//
+// Most responses do not carry the signing secret: they set HasSigningSecret and
+// SigningSecretLast4 instead. SigningSecret is populated only by Create, which returns the
+// generated secret once, and it is nil on every source that came from List or Get. It is also nil
+// on a Create response for a provider with no secret to return (built-in key providers such as
+// wise, and asana or notion, whose secret arrives after registration).
 type Source struct {
-	ID              string         `json:"id"`
-	OrganizationID  string         `json:"organizationId"`
-	Name            string         `json:"name"`
-	Slug            string         `json:"slug"`
-	Description     *string        `json:"description"`
-	Provider        SourceProvider `json:"provider"`
-	IsActive        FlexBool       `json:"isActive"`
-	SigningSecret   *string        `json:"signingSecret"`
-	IngestURL       *string        `json:"ingestUrl"`
-	VerifySignature FlexBool       `json:"verifySignature"`
-	DedupStrategy   DedupStrategy  `json:"dedupStrategy"`
-	DedupWindow     *int           `json:"dedupWindow"`
-	DedupHeaderName *string        `json:"dedupHeaderName"`
-	IPFilterMode    IPFilterMode   `json:"ipFilterMode"`
-	IPAllowlist     []string       `json:"ipAllowlist"`
-	IPDenylist      []string       `json:"ipDenylist"`
-	RateLimit       *int           `json:"rateLimit"`
-	RateLimitWindow *int           `json:"rateLimitWindow"`
+	ID             string         `json:"id"`
+	OrganizationID string         `json:"organizationId"`
+	Name           string         `json:"name"`
+	Slug           string         `json:"slug"`
+	Provider       SourceProvider `json:"provider"`
+	Description    *string        `json:"description"`
+	// HasSigningSecret reports whether a signing secret is set. The secret itself is not returned.
+	HasSigningSecret FlexBool `json:"hasSigningSecret"`
+	// SigningSecret is the full secret, returned only by Create. nil on List and Get responses;
+	// use RevealSecret to read it again afterwards.
+	SigningSecret *string `json:"signingSecret,omitempty"`
+	// SigningSecretLast4 is the last four characters of the signing secret, prefixed with "...".
+	SigningSecretLast4 *string `json:"signingSecretLast4"`
+	// VerifiesWithoutSecret reports that the provider verifies against a key Hookbase already
+	// holds (wise, wise-sandbox, aws-sns), so HasSigningSecret being false is not a gap.
+	VerifiesWithoutSecret FlexBool `json:"verifiesWithoutSecret"`
+	// AwaitingSigningSecret reports that the provider issues its secret only after the ingest URL
+	// is registered with it (asana, notion) and none has been set yet. Events are unverified
+	// until one is.
+	AwaitingSigningSecret FlexBool `json:"awaitingSigningSecret"`
+	// VerifyToken is the Meta verify token, returned in full only by Create for providers that
+	// use one (whatsapp). nil everywhere else; use SourcesResource.VerifyToken to read it again.
+	VerifyToken *string `json:"verifyToken,omitempty"`
+	// RejectInvalidSignatures rejects events whose signature fails verification. It defaults to
+	// false, in which case a failing event is flagged with signatureValid: false and delivered.
+	RejectInvalidSignatures FlexBool     `json:"rejectInvalidSignatures"`
+	RateLimitPerMinute      *int         `json:"rateLimitPerMinute"`
+	IsActive                FlexBool     `json:"isActive"`
+	CustomDomainID          *string      `json:"customDomainId"`
+	IPFilterMode            IPFilterMode `json:"ipFilterMode"`
+	IPAllowlist             []string     `json:"ipAllowlist"`
+	IPDenylist              []string     `json:"ipDenylist"`
+	// EncryptFields are JSONPath expressions whose values are encrypted at rest.
+	EncryptFields []string `json:"encryptFields"`
+	// MaskFields are JSONPath expressions whose values are masked in stored payloads.
+	MaskFields        []string      `json:"maskFields"`
+	DedupEnabled      FlexBool      `json:"dedupEnabled"`
+	DedupStrategy     DedupStrategy `json:"dedupStrategy"`
+	DedupWindowHours  int           `json:"dedupWindowHours"`
+	DedupCustomHeader *string       `json:"dedupCustomHeader"`
 	// TransientMode - payloads never stored at rest (HIPAA/GDPR compliance)
 	TransientMode FlexBool `json:"transientMode"`
 	// AllowedMethods - HTTP verbs the ingest endpoint accepts. Empty means any method.
 	AllowedMethods []string `json:"allowedMethods"`
 	EventCount     int      `json:"eventCount"`
-	LastEventAt    *string  `json:"lastEventAt"`
-	CreatedAt      string   `json:"createdAt"`
-	UpdatedAt      string   `json:"updatedAt"`
+	RouteCount     int      `json:"routeCount"`
+	// IngestURL is returned by Get and Create. It is not included in List responses.
+	IngestURL *string `json:"ingestUrl"`
+	CreatedAt string  `json:"createdAt"`
+	UpdatedAt string  `json:"updatedAt"`
+
+	// The fields below name response keys the API has never sent. They decoded to the zero value
+	// on every version of this SDK that declared them, so reading one has always told you nothing
+	// about the source. They are kept, tagged json:"-", so existing code still compiles; each one
+	// names the field that carries the value it was supposed to. They will go in v2.
+
+	// Deprecated: always false. Use RejectInvalidSignatures.
+	VerifySignature FlexBool `json:"-"`
+	// Deprecated: always nil. Use DedupWindowHours.
+	DedupWindow *int `json:"-"`
+	// Deprecated: always nil. Use DedupCustomHeader.
+	DedupHeaderName *string `json:"-"`
+	// Deprecated: always nil. Use RateLimitPerMinute.
+	RateLimit *int `json:"-"`
+	// Deprecated: always nil. The API has no per-source rate limit window; RateLimitPerMinute is
+	// per minute by definition.
+	RateLimitWindow *int `json:"-"`
+	// Deprecated: always nil. The API does not return a last-event timestamp on a source; query
+	// the events endpoint filtered by source instead.
+	LastEventAt *string `json:"-"`
 }
 
 // CreateSourceParams are the parameters for creating a source.
 type CreateSourceParams struct {
-	Name            string          `json:"name"`
-	Slug            *string         `json:"slug,omitempty"`
-	Description     *string         `json:"description,omitempty"`
-	Provider        *SourceProvider `json:"provider,omitempty"`
-	VerifySignature *bool           `json:"verifySignature,omitempty"`
-	DedupStrategy   *DedupStrategy  `json:"dedupStrategy,omitempty"`
-	DedupWindow     *int            `json:"dedupWindow,omitempty"`
-	DedupHeaderName *string         `json:"dedupHeaderName,omitempty"`
-	IPFilterMode    *IPFilterMode   `json:"ipFilterMode,omitempty"`
-	IPAllowlist     []string        `json:"ipAllowlist,omitempty"`
-	IPDenylist      []string        `json:"ipDenylist,omitempty"`
-	RateLimit       *int            `json:"rateLimit,omitempty"`
-	RateLimitWindow *int            `json:"rateLimitWindow,omitempty"`
-	TransientMode   *bool           `json:"transientMode,omitempty"`
+	Name string `json:"name"`
+	// Slug is required: it forms the ingest URL, /ingest/<org>/<slug>, and cannot be changed later.
+	Slug        string          `json:"slug"`
+	Provider    *SourceProvider `json:"provider,omitempty"`
+	Description *string         `json:"description,omitempty"`
+	// SigningSecret supplies the secret the provider signs with. What it must be depends on the
+	// provider (see SourceProvider): vendor-issued secrets are required for some providers and
+	// format-checked, built-in key providers refuse one with a 400, and for operator-chosen
+	// secrets omitting it makes the API generate one, returned once on the created source.
+	SigningSecret *string `json:"signingSecret,omitempty"`
+	// VerifyToken is the Meta verify token (whatsapp only; any other provider is a 400). Omit it,
+	// or send "", and the API generates one, returned once on the created source.
+	VerifyToken *string `json:"verifyToken,omitempty"`
+	// RejectInvalidSignatures rejects events whose signature fails verification. Defaults to false.
+	RejectInvalidSignatures *bool          `json:"rejectInvalidSignatures,omitempty"`
+	RateLimitPerMinute      *int           `json:"rateLimitPerMinute,omitempty"`
+	IPFilterMode            *IPFilterMode  `json:"ipFilterMode,omitempty"`
+	IPAllowlist             []string       `json:"ipAllowlist,omitempty"`
+	IPDenylist              []string       `json:"ipDenylist,omitempty"`
+	EncryptFields           []string       `json:"encryptFields,omitempty"`
+	MaskFields              []string       `json:"maskFields,omitempty"`
+	DedupEnabled            *bool          `json:"dedupEnabled,omitempty"`
+	DedupStrategy           *DedupStrategy `json:"dedupStrategy,omitempty"`
+	// DedupWindowHours is the deduplication window in hours, 1 to 168.
+	DedupWindowHours *int `json:"dedupWindowHours,omitempty"`
+	// DedupCustomHeader is the header to deduplicate on when DedupStrategy is idempotency_key.
+	DedupCustomHeader *string `json:"dedupCustomHeader,omitempty"`
+	TransientMode     *bool   `json:"transientMode,omitempty"`
 	// AllowedMethods restricts the ingest endpoint to these HTTP verbs. Omit for any method.
 	AllowedMethods []string `json:"allowedMethods,omitempty"`
 }
 
+// SourceField names one source setting, for UpdateSourceParams.Clear.
+type SourceField string
+
+// The settings PATCH /api/sources/:id accepts a null for.
+const (
+	SourceDescription SourceField = "description"
+	// SourceProviderField clears the provider, which also clears the signing secret and turns off
+	// RejectInvalidSignatures.
+	SourceProviderField SourceField = "provider"
+	// SourceSigningSecret clears the signing secret. For a provider whose secret Hookbase
+	// generates, use RotateSecret instead to get a fresh one.
+	SourceSigningSecret SourceField = "signingSecret"
+	// SourceVerifyToken makes the API generate a fresh Meta verify token (whatsapp only). It is
+	// the same as RotateVerifyToken except that the new token is not returned.
+	SourceVerifyToken        SourceField = "verifyToken"
+	SourceRateLimitPerMinute SourceField = "rateLimitPerMinute"
+	SourceIPAllowlist        SourceField = "ipAllowlist"
+	SourceIPDenylist         SourceField = "ipDenylist"
+	SourceEncryptFields      SourceField = "encryptFields"
+	SourceMaskFields         SourceField = "maskFields"
+	SourceDedupStrategy      SourceField = "dedupStrategy"
+	SourceDedupWindowHours   SourceField = "dedupWindowHours"
+	SourceDedupCustomHeader  SourceField = "dedupCustomHeader"
+	SourceAllowedMethods     SourceField = "allowedMethods"
+)
+
+// clearableSourceFields is the allowlist behind Clear: the fields updateSourceSchema in the API
+// declares nullable. Anything else would be a 400 from the server; refusing it here says why.
+var clearableSourceFields = map[SourceField]bool{
+	SourceDescription:        true,
+	SourceProviderField:      true,
+	SourceSigningSecret:      true,
+	SourceVerifyToken:        true,
+	SourceRateLimitPerMinute: true,
+	SourceIPAllowlist:        true,
+	SourceIPDenylist:         true,
+	SourceEncryptFields:      true,
+	SourceMaskFields:         true,
+	SourceDedupStrategy:      true,
+	SourceDedupWindowHours:   true,
+	SourceDedupCustomHeader:  true,
+	SourceAllowedMethods:     true,
+}
+
 // UpdateSourceParams are the parameters for updating a source.
+//
+// Every field is optional: only the ones set are sent, and only the settings sent are changed.
+// To send an explicit null (clear a secret, regenerate a verify token), name the field in Clear.
 type UpdateSourceParams struct {
-	Name            *string        `json:"name,omitempty"`
-	Description     *string        `json:"description,omitempty"`
-	IsActive        *bool          `json:"isActive,omitempty"`
-	VerifySignature *bool          `json:"verifySignature,omitempty"`
-	DedupStrategy   *DedupStrategy `json:"dedupStrategy,omitempty"`
-	DedupWindow     *int           `json:"dedupWindow,omitempty"`
-	DedupHeaderName *string        `json:"dedupHeaderName,omitempty"`
-	IPFilterMode    *IPFilterMode  `json:"ipFilterMode,omitempty"`
-	IPAllowlist     []string       `json:"ipAllowlist,omitempty"`
-	IPDenylist      []string       `json:"ipDenylist,omitempty"`
-	RateLimit       *int           `json:"rateLimit,omitempty"`
-	RateLimitWindow *int           `json:"rateLimitWindow,omitempty"`
-	TransientMode   *bool          `json:"transientMode,omitempty"`
+	Name        *string         `json:"name,omitempty"`
+	Description *string         `json:"description,omitempty"`
+	Provider    *SourceProvider `json:"provider,omitempty"`
+	IsActive    *bool           `json:"isActive,omitempty"`
+	// SigningSecret replaces the signing secret, subject to the same per-provider rules as on
+	// create. Switching Provider to one with a vendor-issued secret needs the new secret in the
+	// same update (a 400 otherwise). To clear it, use Clear: []SourceField{SourceSigningSecret}.
+	SigningSecret *string `json:"signingSecret,omitempty"`
+	// VerifyToken sets the Meta verify token (whatsapp only; any other provider is a 400). To have
+	// the API generate a fresh one, use Clear: []SourceField{SourceVerifyToken}, or
+	// RotateVerifyToken, which also returns it.
+	VerifyToken             *string        `json:"verifyToken,omitempty"`
+	RejectInvalidSignatures *bool          `json:"rejectInvalidSignatures,omitempty"`
+	RateLimitPerMinute      *int           `json:"rateLimitPerMinute,omitempty"`
+	IPFilterMode            *IPFilterMode  `json:"ipFilterMode,omitempty"`
+	IPAllowlist             []string       `json:"ipAllowlist,omitempty"`
+	IPDenylist              []string       `json:"ipDenylist,omitempty"`
+	EncryptFields           []string       `json:"encryptFields,omitempty"`
+	MaskFields              []string       `json:"maskFields,omitempty"`
+	DedupEnabled            *bool          `json:"dedupEnabled,omitempty"`
+	DedupStrategy           *DedupStrategy `json:"dedupStrategy,omitempty"`
+	DedupWindowHours        *int           `json:"dedupWindowHours,omitempty"`
+	DedupCustomHeader       *string        `json:"dedupCustomHeader,omitempty"`
+	TransientMode           *bool          `json:"transientMode,omitempty"`
 	// AllowedMethods restricts the ingest endpoint to these HTTP verbs. Omit for any method.
 	AllowedMethods []string `json:"allowedMethods,omitempty"`
+
+	// Clear names settings to send as an explicit JSON null. Every other field on this struct is a
+	// pointer or a slice, where nil means "leave this alone", so nil cannot also mean "set this
+	// back to nothing". This follows UpdateEndpointParams.Clear:
+	//
+	//	params := UpdateSourceParams{Clear: []SourceField{SourceSigningSecret}}
+	//
+	// Only fields the API accepts null for are allowed; anything else, or a field that is also set
+	// on this struct, is a marshalling error rather than a silent choice between them.
+	Clear []SourceField `json:"-"`
+}
+
+// MarshalJSON adds the nulls Clear names to whatever the struct emits. Update posts this struct
+// directly, so this is the PATCH body.
+func (p UpdateSourceParams) MarshalJSON() ([]byte, error) {
+	type wire UpdateSourceParams
+	encoded, err := json.Marshal(wire(p))
+	if err != nil {
+		return nil, err
+	}
+	if len(p.Clear) == 0 {
+		return encoded, nil
+	}
+	var body map[string]json.RawMessage
+	if err := json.Unmarshal(encoded, &body); err != nil {
+		return nil, err
+	}
+	for _, field := range p.Clear {
+		if !clearableSourceFields[field] {
+			return nil, fmt.Errorf("hookbase: UpdateSourceParams.Clear names %q, which the API does not accept a null for", string(field))
+		}
+		if _, alsoSet := body[string(field)]; alsoSet {
+			return nil, fmt.Errorf("hookbase: UpdateSourceParams.Clear names %q but that field is also set; clear it or set it, not both", string(field))
+		}
+		body[string(field)] = json.RawMessage("null")
+	}
+	return json.Marshal(body)
 }
 
 // ListSourcesParams are the parameters for listing sources.
@@ -175,7 +439,7 @@ func (r *SourcesResource) List(ctx context.Context, params *ListSourcesParams, o
 	return page, nil
 }
 
-// Get returns a source by ID or slug.
+// Get returns a source by ID or slug. An unknown ID or slug is a *NotFoundError.
 func (r *SourcesResource) Get(ctx context.Context, id string, opts ...RequestOption) (*Source, error) {
 	var resp struct {
 		Source Source `json:"source"`
@@ -197,7 +461,8 @@ func (r *SourcesResource) Create(ctx context.Context, params *CreateSourceParams
 	return &resp.Source, nil
 }
 
-// Update updates a source.
+// Update updates a source. The API answers {success: true} rather than the updated source; call
+// Get to read it back.
 func (r *SourcesResource) Update(ctx context.Context, id string, params *UpdateSourceParams, opts ...RequestOption) error {
 	return r.t.do(ctx, "PATCH", "/api/sources/"+url.PathEscape(id), nil, params, nil, opts...)
 }
@@ -207,7 +472,13 @@ func (r *SourcesResource) Delete(ctx context.Context, id string, opts ...Request
 	return r.t.do(ctx, "DELETE", "/api/sources/"+url.PathEscape(id), nil, nil, nil, opts...)
 }
 
-// RotateSecret rotates the signing secret for a source.
+// RotateSecret replaces the signing secret with a freshly generated one and returns it.
+//
+// It only applies where Hookbase chooses the secret. The API answers with a 400 (a
+// *ValidationError) for providers whose key is built in (wise, aws-sns), that verify with a
+// public key (paste the vendor's new key with Update instead), that issue their own secret
+// (standard-webhooks and friends: regenerate it at the vendor, then Update), and whose secret
+// arrives after registration (asana, notion).
 func (r *SourcesResource) RotateSecret(ctx context.Context, id string, opts ...RequestOption) (string, error) {
 	var resp struct {
 		SigningSecret string `json:"signingSecret"`
@@ -218,7 +489,8 @@ func (r *SourcesResource) RotateSecret(ctx context.Context, id string, opts ...R
 	return resp.SigningSecret, nil
 }
 
-// RevealSecret reveals the signing secret for a source.
+// RevealSecret reveals the signing secret for a source. A source with no secret is a
+// *NotFoundError.
 func (r *SourcesResource) RevealSecret(ctx context.Context, id string, opts ...RequestOption) (string, error) {
 	var resp struct {
 		SigningSecret string `json:"signingSecret"`
@@ -227,6 +499,58 @@ func (r *SourcesResource) RevealSecret(ctx context.Context, id string, opts ...R
 		return "", err
 	}
 	return resp.SigningSecret, nil
+}
+
+// VerifyToken returns the Meta verify token for a source (whatsapp). A provider with no verify
+// token is a 400 (*ValidationError).
+func (r *SourcesResource) VerifyToken(ctx context.Context, id string, opts ...RequestOption) (string, error) {
+	var resp struct {
+		VerifyToken string `json:"verifyToken"`
+	}
+	if err := r.t.do(ctx, "GET", "/api/sources/"+url.PathEscape(id)+"/verify-token", nil, nil, &resp, opts...); err != nil {
+		return "", err
+	}
+	return resp.VerifyToken, nil
+}
+
+// RotateVerifyToken generates a new Meta verify token for a source and returns it. Meta checks
+// the token only when the callback URL is (re)registered, so paste the new one there.
+func (r *SourcesResource) RotateVerifyToken(ctx context.Context, id string, opts ...RequestOption) (string, error) {
+	var resp struct {
+		VerifyToken string `json:"verifyToken"`
+	}
+	if err := r.t.do(ctx, "POST", "/api/sources/"+url.PathEscape(id)+"/rotate-verify-token", nil, nil, &resp, opts...); err != nil {
+		return "", err
+	}
+	return resp.VerifyToken, nil
+}
+
+// PendingVerification is a verification token a vendor delivered to the ingest URL during
+// registration (notion), parked until an operator adopts it as the signing secret.
+type PendingVerification struct {
+	Provider   string  `json:"provider"`
+	Token      string  `json:"token"`
+	ReceivedAt string  `json:"receivedAt"`
+	ClientIP   *string `json:"clientIp"`
+}
+
+// GetPendingVerification returns the verification token waiting for a source. When none is
+// waiting (or the source does not exist) it returns a *NotFoundError; check with errors.As.
+//
+// The token arrived unauthenticated, so paste it into the vendor's verify form first and only
+// then AdoptPendingVerification: a planted token simply fails there.
+func (r *SourcesResource) GetPendingVerification(ctx context.Context, id string, opts ...RequestOption) (*PendingVerification, error) {
+	var resp PendingVerification
+	if err := r.t.do(ctx, "GET", "/api/sources/"+url.PathEscape(id)+"/pending-verification", nil, nil, &resp, opts...); err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}
+
+// AdoptPendingVerification makes the waiting verification token the source's signing secret.
+// When none is waiting it returns a *NotFoundError.
+func (r *SourcesResource) AdoptPendingVerification(ctx context.Context, id string, opts ...RequestOption) error {
+	return r.t.do(ctx, "POST", "/api/sources/"+url.PathEscape(id)+"/pending-verification/adopt", nil, nil, nil, opts...)
 }
 
 // Export exports sources as JSON.
@@ -280,7 +604,8 @@ type BulkDeleteResult struct {
 	Deleted int  `json:"deleted"`
 }
 
-// BulkDelete deletes multiple sources.
+// BulkDelete deletes up to 100 sources. If any ID does not belong to the organization, nothing
+// is deleted and the API answers with a 400.
 func (r *SourcesResource) BulkDelete(ctx context.Context, ids []string, opts ...RequestOption) (*BulkDeleteResult, error) {
 	var resp BulkDeleteResult
 	body := map[string]interface{}{"ids": ids}

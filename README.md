@@ -68,11 +68,25 @@ spec:
   name: GitHub Webhooks
   slug: github-webhooks
   provider: github
-  verifySignature: true
+  rejectInvalidSignatures: true
   signingSecretRef:
     name: github-webhook-secret
     key: secret
 ```
+
+Signing secrets and verify tokens:
+
+- `spec.signingSecretRef` (default key `signingSecret`) is read and sent to Hookbase on create, and
+  again whenever that Secret changes. The operator never writes to a Secret you reference.
+- Without `signingSecretRef`, a secret Hookbase generates is stored in the operator-owned Secret
+  `<metadata.name>-signing-secret` under key `signingSecret`. Providers with no secret (wise,
+  wise-sandbox, aws-sns) or whose secret arrives after registration (asana, notion) store nothing at create
+  (`status.verifiesWithoutSecret` / `status.awaitingSigningSecret` report those states); once an
+  asana/notion secret is set it is copied into the operator-owned Secret on a later reconcile.
+- WhatsApp: `spec.verifyTokenRef` (default key `verifyToken`) supplies the Meta verify token.
+  Without it, the generated token is stored in `<metadata.name>-signing-secret` under key
+  `verifyToken`.
+- `verifySignature` is a deprecated alias for `rejectInvalidSignatures`.
 
 ### WebhookDestination
 

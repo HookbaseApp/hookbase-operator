@@ -115,7 +115,7 @@ func (r *HookbaseCronJobReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 			params.Description = &cron.Spec.Description
 		}
 		if payload != "" {
-			params.Body = &payload
+			params.Payload = &payload
 		}
 		if cron.Spec.Timezone != "" {
 			params.Timezone = &cron.Spec.Timezone
@@ -149,7 +149,7 @@ func (r *HookbaseCronJobReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 			params.Description = &cron.Spec.Description
 		}
 		if payload != "" {
-			params.Body = &payload
+			params.Payload = &payload
 		}
 		if cron.Spec.Timezone != "" {
 			params.Timezone = &cron.Spec.Timezone

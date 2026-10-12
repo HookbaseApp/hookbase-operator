@@ -4,7 +4,7 @@ metadata:
   name: my-app-webhooks
   annotations:
     hookbase.io/source-provider: "stripe"
-    hookbase.io/source-verify-signature: "true"
+    hookbase.io/source-reject-invalid-signatures: "true"
     hookbase.io/source-signing-secret-ref: "stripe-secret:whsec"
     hookbase.io/api-key-ref: "hookbase-team-key"
 spec:

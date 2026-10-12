@@ -3,6 +3,7 @@ package controller
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -159,10 +160,8 @@ func (r *IngressReconciler) ensureWebhookSource(ctx context.Context, ingress *ne
 		source.Spec.SigningSecretRef = ref
 	}
 
-	verifyStr := annotations["hookbase.io/source-verify-signature"]
-	if verifyStr == "true" {
-		t := true
-		source.Spec.VerifySignature = &t
+	if reject := sourceRejectInvalidSignatures(annotations); reject != nil {
+		source.Spec.RejectInvalidSignatures = reject
 	}
 
 	if apiKeyRef != "" {
@@ -174,6 +173,21 @@ func (r *IngressReconciler) ensureWebhookSource(ctx context.Context, ingress *ne
 	}
 
 	return r.Create(ctx, source)
+}
+
+// sourceRejectInvalidSignatures reads spec.rejectInvalidSignatures from the Ingress annotations.
+// hookbase.io/source-reject-invalid-signatures is the preferred name; the older
+// hookbase.io/source-verify-signature is still honoured (it always meant the same API setting)
+// when the preferred one is absent. Values that do not parse as a bool are ignored.
+func sourceRejectInvalidSignatures(annotations map[string]string) *bool {
+	for _, key := range []string{"hookbase.io/source-reject-invalid-signatures", "hookbase.io/source-verify-signature"} {
+		if raw, ok := annotations[key]; ok {
+			if v, err := strconv.ParseBool(strings.TrimSpace(raw)); err == nil {
+				return &v
+			}
+		}
+	}
+	return nil
 }
 
 func (r *IngressReconciler) ensureWebhookTunnel(ctx context.Context, ingress *networkingv1.Ingress, name, serviceName string, port int, apiKeyRef string) error {

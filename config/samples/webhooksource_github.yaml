@@ -9,12 +9,16 @@ spec:
   slug: github-webhooks
   provider: github
   description: "Receives webhooks from GitHub repositories"
-  verifySignature: true
+  rejectInvalidSignatures: true
+  # GitHub never issues the secret: you choose it. Its value is sent to Hookbase on create (and
+  # again whenever this Secret changes); the operator never writes to a referenced Secret.
+  # Omit signingSecretRef to have Hookbase generate one, stored in the operator-owned Secret
+  # "<metadata.name>-signing-secret" under key "signingSecret".
   signingSecretRef:
     name: github-webhook-secret
     key: secret
   rateLimitPerMinute: 1000
-  dedupStrategy: header
+  dedupStrategy: provider_id
   dedupWindowHours: 24
   # Restrict which HTTP verbs the ingest endpoint accepts. Omit to accept any method.
   # allowedMethods: [POST]

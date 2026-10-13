@@ -1,3 +1,6 @@
+# github.com/HookbaseApp/hookbase-go v1.10.0
+## explicit; go 1.21
+github.com/HookbaseApp/hookbase-go
 # github.com/beorn7/perks v1.0.1
 ## explicit; go 1.11
 github.com/beorn7/perks/quantile
@@ -73,9 +76,6 @@ github.com/google/gofuzz/bytesource
 # github.com/google/uuid v1.6.0
 ## explicit
 github.com/google/uuid
-# github.com/hookbase/hookbase-go v1.10.0 => ../sdk/go-sdk
-## explicit; go 1.21
-github.com/hookbase/hookbase-go
 # github.com/imdario/mergo v0.3.6
 ## explicit
 github.com/imdario/mergo
@@ -718,4 +718,3 @@ sigs.k8s.io/structured-merge-diff/v4/value
 ## explicit; go 1.12
 sigs.k8s.io/yaml
 sigs.k8s.io/yaml/goyaml.v2
-# github.com/hookbase/hookbase-go => ../sdk/go-sdk

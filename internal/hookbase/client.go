@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"sync"
 
-	hookbasesdk "github.com/hookbase/hookbase-go"
+	hookbasesdk "github.com/HookbaseApp/hookbase-go"
 	hookbasev1alpha1 "github.com/hookbase/hookbase-operator/api/v1alpha1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/types"

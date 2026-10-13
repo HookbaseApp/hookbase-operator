@@ -3,7 +3,7 @@ module github.com/hookbase/hookbase-operator
 go 1.23
 
 require (
-	github.com/hookbase/hookbase-go v1.10.0
+	github.com/HookbaseApp/hookbase-go v1.10.0
 	github.com/prometheus/client_golang v1.20.5
 	k8s.io/api v0.31.0
 	k8s.io/apimachinery v0.31.0
@@ -69,5 +69,3 @@ require (
 	sigs.k8s.io/structured-merge-diff/v4 v4.4.1 // indirect
 	sigs.k8s.io/yaml v1.4.0 // indirect
 )
-
-replace github.com/hookbase/hookbase-go => ../sdk/go-sdk

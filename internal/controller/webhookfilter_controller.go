@@ -5,7 +5,7 @@ import (
 	"errors"
 	"time"
 
-	hookbasesdk "github.com/hookbase/hookbase-go"
+	hookbasesdk "github.com/HookbaseApp/hookbase-go"
 	hookbasev1alpha1 "github.com/hookbase/hookbase-operator/api/v1alpha1"
 	"github.com/hookbase/hookbase-operator/internal/hookbase"
 	"github.com/hookbase/hookbase-operator/internal/metrics"

@@ -203,4 +203,10 @@ jobs:
 
       - name: Cleanup test source
         if: always()
-        run: kubectl delete webhooksource ci-test-source --ignore-not-found
+        timeout-minutes: 3
+        run: |
+          if ! kubectl delete webhooksource ci-test-source --ignore-not-found --timeout=150s; then
+            echo "Delete did not complete; operator logs:"
+            kubectl logs -n hookbase-system deployment/hookbase-operator --tail=100
+            exit 1
+          fi

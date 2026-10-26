@@ -15,8 +15,9 @@ type WebhookTransformSpec struct {
 	// +optional
 	Description string `json:"description,omitempty"`
 
-	// TransformType is the type of transformation (jsonata, javascript, mapping).
-	// +kubebuilder:validation:Enum=jsonata;javascript;mapping
+	// TransformType is the transform language (jsonata, javascript, typescript, liquid, xslt,
+	// jmespath, jsonlogic, jq). jq needs transform isolation on the Hookbase server.
+	// +kubebuilder:validation:Enum=jsonata;javascript;typescript;liquid;xslt;jmespath;jsonlogic;jq
 	TransformType string `json:"transformType"`
 
 	// Code is the inline transform code.

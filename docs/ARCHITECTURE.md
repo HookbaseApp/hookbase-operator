@@ -110,7 +110,7 @@ Optional validating and defaulting webhooks:
 
 | CRD | Purpose |
 |-----|---------|
-| `WebhookTransform` | JSONata/JavaScript transformations applied to webhook payloads |
+| `WebhookTransform` | JSONata, JavaScript, TypeScript, Liquid, XSLT, JMESPath, JSON Logic and jq transformations applied to webhook payloads |
 | `WebhookFilter` | Conditions that determine which webhooks are routed |
 | `WebhookSchema` | JSON Schema validation for incoming webhooks |
 

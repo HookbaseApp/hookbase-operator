@@ -179,7 +179,7 @@ See [`chart/values.yaml`](chart/values.yaml) for all options.
 | `WebhookRoute` | Routes events from source to destination |
 | `WebhookTunnel` | Tunnel for forwarding to in-cluster services |
 | `WebhookFilter` | Filter conditions for routing |
-| `WebhookTransform` | JSONata transforms for payload mapping |
+| `WebhookTransform` | Payload transforms (JSONata, JavaScript, TypeScript, Liquid, XSLT, JMESPath, JSON Logic, jq) |
 | `WebhookSchema` | JSON Schema validation for events |
 | `HookbaseAPIKey` | Managed API keys stored as K8s Secrets |
 | `HookbaseConfig` | Organization-level configuration |

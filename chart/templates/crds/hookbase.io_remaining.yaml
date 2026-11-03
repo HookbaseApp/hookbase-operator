@@ -38,7 +38,7 @@ spec:
                 name: {type: string}
                 slug: {type: string}
                 description: {type: string}
-                transformType: {type: string, enum: [jsonata, javascript, mapping]}
+                transformType: {type: string, enum: [jsonata, javascript, typescript, liquid, xslt, jmespath, jsonlogic, jq]}
                 code: {type: string}
                 codeFrom: {type: object, properties: {name: {type: string}, key: {type: string}}}
                 inputFormat: {type: string, default: json, enum: [json, xml, form, text]}

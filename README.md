@@ -31,20 +31,12 @@ kubectl create secret generic hookbase-api-key \
   -n hookbase-system \
   --from-literal=apiKey="whr_your_api_key_here"
 
-# Install the operator
-helm install hookbase-operator oci://ghcr.io/hookbaseapp/hookbase-operator-chart \
-  -n hookbase-system \
-  --set hookbase.apiKeySecretRef.name=hookbase-api-key
-```
-
-Or install from source:
-
-```bash
-git clone https://github.com/HookbaseApp/hookbase-operator.git
+# Install the operator from a release tag (the chart is not published to a Helm repo)
+git clone --branch v0.4.1 https://github.com/HookbaseApp/hookbase-operator.git
 cd hookbase-operator
 
 helm install hookbase-operator ./chart \
-  -n hookbase-system --create-namespace \
+  -n hookbase-system \
   --set hookbase.apiKeySecretRef.name=hookbase-api-key
 ```
 

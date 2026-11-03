@@ -315,16 +315,17 @@ operator/                          # 7,400 lines of Go
 ## Installation
 
 ```bash
-# Add the Helm repo (when published)
-helm repo add hookbase https://charts.hookbase.app
+# The chart is not published to a Helm repo; install it from a release tag
+git clone --branch v0.4.1 https://github.com/HookbaseApp/hookbase-operator.git
+cd hookbase-operator
 
 # Install with bootstrap API key
-helm install hookbase-operator hookbase/hookbase-operator \
+helm install hookbase-operator ./chart \
   --namespace hookbase-system --create-namespace \
   --set hookbase.apiKey=whr_your_api_key
 
 # Or reference an existing Secret
-helm install hookbase-operator hookbase/hookbase-operator \
+helm install hookbase-operator ./chart \
   --namespace hookbase-system --create-namespace \
   --set hookbase.apiKeySecretRef.name=my-hookbase-key \
   --set hookbase.apiKeySecretRef.key=apiKey

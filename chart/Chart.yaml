@@ -6,7 +6,7 @@ version: 0.3.1
 appVersion: "0.4.1"
 home: https://hookbase.app
 sources:
-  - https://github.com/hookbase/hookbase-operator
+  - https://github.com/HookbaseApp/hookbase-operator
 keywords:
   - hookbase
   - webhooks

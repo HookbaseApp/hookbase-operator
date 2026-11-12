@@ -524,11 +524,11 @@ func TestSourceRemovedListsAreClearedOnTheServer(t *testing.T) {
 		IPDenylist:     []string{"10.1.0.0/16"},
 		AllowedMethods: []hookbasev1alpha1.IngestMethod{"POST"},
 	})
-	got := h.sync()
+	h.sync()
 	lists := []string{"ipAllowlist", "ipDenylist", "allowedMethods"}
 
 	// Still set: the update restates them.
-	got = h.reconcile()
+	got := h.reconcile()
 	patches := h.api.find("PATCH", "/api/sources/src_1")
 	for _, field := range lists {
 		if values, ok := patches[0].Body[field].([]interface{}); !ok || len(values) != 1 {

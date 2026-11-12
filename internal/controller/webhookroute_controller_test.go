@@ -99,7 +99,7 @@ func (h *routeHarness) lastPatch() map[string]interface{} {
 
 func TestRouteRemovingFailoverRefsClearsThemOnTheServer(t *testing.T) {
 	h := newRouteHarness(t, hookbasev1alpha1.WebhookRouteSpec{FailoverDestinationRefs: []string{"backup"}})
-	got := h.sync()
+	h.sync()
 
 	create := h.api.find("POST", "/api/routes")[0].Body
 	if ids, ok := create["failoverDestinationIds"].([]interface{}); !ok || len(ids) != 1 || ids[0] != "dst_2" {
@@ -107,7 +107,7 @@ func TestRouteRemovingFailoverRefsClearsThemOnTheServer(t *testing.T) {
 	}
 
 	// Still named: the update restates the list.
-	got = h.reconcile()
+	got := h.reconcile()
 	if ids, ok := h.lastPatch()["failoverDestinationIds"].([]interface{}); !ok || len(ids) != 1 {
 		t.Fatalf("update failoverDestinationIds = %v", h.lastPatch()["failoverDestinationIds"])
 	}

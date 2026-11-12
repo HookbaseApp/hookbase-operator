@@ -265,8 +265,8 @@ func TestDestinationForeignSecretWithOwnedNameIsNotOverwritten(t *testing.T) {
 		apiDestination("http", map[string]interface{}{"hasSigningSecret": true, "signingSecret": "whsec_created"}),
 		httpDestination(hookbasev1alpha1.WebhookDestinationSpec{}), foreign)
 	h.reveal = "whsec_revealed"
-	got := h.sync()
-	h.reconcile()
+	h.sync()
+	got := h.reconcile()
 
 	after := h.secret("relay-signing-secret")
 	if string(after.Data["signingSecret"]) != "someone-elses" || len(after.Data) != 1 || len(after.OwnerReferences) != 0 {
@@ -290,7 +290,7 @@ func TestDestinationQueueTypeConfigFromSecretAndNoSigningSecret(t *testing.T) {
 		&hookbasev1alpha1.WebhookDestination{Spec: hookbasev1alpha1.WebhookDestinationSpec{
 			Name: "Queue", Type: "sqs", ConfigSecretRef: &hookbasev1alpha1.SecretKeyRef{Name: "sqs-config"},
 		}}, cfg)
-	got := h.sync()
+	h.sync()
 
 	create := h.api.find("POST", "/api/destinations")[0].Body
 	if create["type"] != "sqs" {
@@ -309,7 +309,7 @@ func TestDestinationQueueTypeConfigFromSecretAndNoSigningSecret(t *testing.T) {
 		}
 	}
 
-	got = h.reconcile()
+	got := h.reconcile()
 	if h.secret("relay-signing-secret") != nil {
 		t.Fatal("a queue destination has no signing secret to store")
 	}

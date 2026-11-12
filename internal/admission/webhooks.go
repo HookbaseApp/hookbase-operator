@@ -103,15 +103,57 @@ func (v *HookbaseValidator) validateWebhookDestination(ctx context.Context, req 
 		if dest.Spec.URL == "" {
 			return admission.Denied("spec.url is required for HTTP destinations")
 		}
-	case "s3", "r2", "gcs", "azure_blob":
+	case "sqs", "eventbridge", "servicebus", "pubsub", "oci_queue", "s3", "r2", "gcs", "azure_blob":
 		if dest.Spec.ConfigSecretRef == nil {
 			return admission.Denied(fmt.Sprintf("spec.configSecretRef is required for %s destinations", destType))
+		}
+	case "bridge":
+		if msg := validateBridgeDestination(&dest.Spec); msg != "" {
+			return admission.Denied(msg)
 		}
 	default:
 		return admission.Denied(fmt.Sprintf("unsupported destination type: %q", destType))
 	}
 
 	return admission.Allowed("")
+}
+
+// validateBridgeDestination mirrors the API's checks on a bridge destination, so a manifest it
+// would answer 400 for is refused at apply time. It returns the reason, or "" when it is valid.
+func validateBridgeDestination(spec *hookbasev1alpha1.WebhookDestinationSpec) string {
+	bridge := spec.Bridge
+	if bridge == nil {
+		return "spec.bridge is required for bridge destinations"
+	}
+	switch {
+	case spec.URL != "":
+		return "bridge destinations take no spec.url"
+	case len(spec.Headers) > 0:
+		return "bridge destinations take no spec.headers"
+	case spec.AuthType != "" && spec.AuthType != "none":
+		return "bridge destinations take no spec.authType"
+	case spec.UseStaticIP != nil && *spec.UseStaticIP:
+		return "bridge destinations take no spec.useStaticIp"
+	}
+	switch bridge.EventTypeSource {
+	case "fixed":
+		if bridge.EventType == "" {
+			return "spec.bridge.eventType is required when eventTypeSource is fixed"
+		}
+		if bridge.EventTypeField != "" || bridge.EventTypePrefix != "" {
+			return "spec.bridge.eventTypeField and eventTypePrefix are only allowed when eventTypeSource is field"
+		}
+	case "field":
+		if bridge.EventTypeField == "" {
+			return "spec.bridge.eventTypeField is required when eventTypeSource is field"
+		}
+		if bridge.EventType != "" {
+			return "spec.bridge.eventType is only allowed when eventTypeSource is fixed"
+		}
+	default:
+		return fmt.Sprintf("spec.bridge.eventTypeSource must be fixed or field, not %q", bridge.EventTypeSource)
+	}
+	return ""
 }
 
 func (v *HookbaseValidator) validateWebhookRoute(ctx context.Context, req admission.Request) admission.Response {

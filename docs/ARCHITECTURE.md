@@ -91,6 +91,8 @@ Production-ready Helm chart with:
 
 Optional validating and defaulting webhooks:
 - **Slug immutability** — prevents changing `.spec.slug` after creation
+- **catalogProvider immutability** — prevents adding, changing or removing a source's `.spec.catalogProvider` after creation (the CRD enforces this too, with a CEL rule)
+- **Destination types** — requires `url` for http, `configSecretRef` for queue and storage types, and a valid `bridge` (no url, headers, authType or useStaticIp) for bridge
 - **CIDR validation** — validates IP allowlist/denylist entries
 - **Mutual exclusion** — prevents setting both `filterRef` and `filterConditions` on routes
 - **Defaults** — sets `provider=generic`, `method=POST`, `filterLogic=AND`
@@ -102,7 +104,7 @@ Optional validating and defaulting webhooks:
 | CRD | API Group | Purpose |
 |-----|-----------|---------|
 | `WebhookSource` | `hookbase.io/v1alpha1` | Defines a webhook ingestion endpoint (e.g., "GitHub Webhooks") |
-| `WebhookDestination` | `hookbase.io/v1alpha1` | Defines where webhooks are delivered (URL + auth) |
+| `WebhookDestination` | `hookbase.io/v1alpha1` | Defines where webhooks are delivered (HTTP URL + auth, queue, storage, or bridge) |
 | `WebhookRoute` | `hookbase.io/v1alpha1` | Connects a source to a destination with optional filter/transform |
 | `WebhookTunnel` | `hookbase.io/v1alpha1` | Creates a public URL that tunnels to a local K8s service |
 
@@ -157,6 +159,8 @@ Every controller follows the same pattern:
 
 **Special behaviors:**
 - **WebhookRoute**: Resolves `sourceRef` and `destinationRef` to their API IDs by reading sibling CRDs. If any ref isn't Ready, requeues instead of failing.
+- **WebhookSource / WebhookDestination**: Store the signing secret Hookbase generates in an operator-owned Secret `<metadata.name>-signing-secret` (key `signingSecret`) with an owner reference, so it is deleted with the resource. If it is missing (an older operator, or deleted by hand), it is copied in once through the API's reveal-secret endpoint. A Secret of that name the resource does not control is never written.
+- **Clearing**: The SDK omits empty lists, so a list removed from the manifest (a route's `failoverDestinationRefs`; a source's `ipAllowlist`, `ipDenylist`, `allowedMethods`) is sent as an explicit null on update to clear it in Hookbase.
 - **WebhookTunnel**: Creates a K8s Secret with the auth token (only available at creation time). Injects a sidecar container into the target Deployment.
 - **HookbaseAPIKey**: Uses the bootstrap key (not its own key) for API calls. Stores the raw API key in a K8s Secret with owner reference.
 
@@ -316,7 +320,7 @@ operator/                          # 7,400 lines of Go
 
 ```bash
 # The chart is not published to a Helm repo; install it from a release tag
-git clone --branch v0.4.1 https://github.com/HookbaseApp/hookbase-operator.git
+git clone --branch v0.5.0 https://github.com/HookbaseApp/hookbase-operator.git
 cd hookbase-operator
 
 # Install with bootstrap API key

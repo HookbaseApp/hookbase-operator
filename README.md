@@ -32,7 +32,7 @@ kubectl create secret generic hookbase-api-key \
   --from-literal=apiKey="whr_your_api_key_here"
 
 # Install the operator from a release tag (the chart is not published to a Helm repo)
-git clone --branch v0.4.1 https://github.com/HookbaseApp/hookbase-operator.git
+git clone --branch v0.5.0 https://github.com/HookbaseApp/hookbase-operator.git
 cd hookbase-operator
 
 helm install hookbase-operator ./chart \
@@ -80,6 +80,14 @@ Signing secrets and verify tokens:
   `verifyToken`.
 - `verifySignature` is a deprecated alias for `rejectInvalidSignatures`.
 
+Other fields:
+
+- `spec.catalogProvider` names the provider-catalog entry the source is made from (e.g. `stripe`),
+  so Hookbase applies that vendor's published sender IPs. It is sent on create only and cannot be
+  added, changed or removed afterwards.
+- Removing `ipAllowlist`, `ipDenylist` or `allowedMethods` from the manifest clears them in
+  Hookbase.
+
 ### WebhookDestination
 
 ```yaml
@@ -93,6 +101,38 @@ spec:
   url: https://api.example.com/webhooks
   method: POST
   timeoutMs: 30000
+```
+
+`spec.type` is `http` (the default); a queue or event-bus type (`sqs`, `eventbridge`, `servicebus`,
+`pubsub`, `oci_queue`); a storage type (`s3`, `r2`, `gcs`, `azure_blob`); or `bridge`. Queue and
+storage destinations read their configuration from the Secret named by `spec.configSecretRef`; the
+keys for each type are listed on `ConfigSecretRef` in
+[`api/v1alpha1/webhookdestination_types.go`](api/v1alpha1/webhookdestination_types.go).
+
+Every http destination signs its deliveries. Hookbase returns the signing secret once, at create;
+the operator stores it in the operator-owned Secret `<metadata.name>-signing-secret` under key
+`signingSecret`, and `status.hasSigningSecret` is true. Give that Secret to the receiver to verify
+deliveries. A destination created before v0.5.0 has its secret copied into the Secret on the next
+reconcile. A Secret of that name the destination does not own is never overwritten; the secret is
+not stored then. A WebhookSource and a WebhookDestination with the same `metadata.name` in one
+namespace would both use that Secret name, so give them different names.
+
+A bridge destination publishes each delivery as an outbound event. Its configuration holds no
+secrets and is set inline; it takes no `url`, `headers`, `authType` or `useStaticIp`, and its API
+key needs the `events:send` permission:
+
+```yaml
+apiVersion: hookbase.io/v1alpha1
+kind: WebhookDestination
+metadata:
+  name: stripe-bridge
+spec:
+  name: Stripe bridge
+  type: bridge
+  bridge:
+    eventTypeSource: field     # or "fixed", with eventType
+    eventTypeField: type
+    eventTypePrefix: stripe.
 ```
 
 ### WebhookRoute
@@ -111,6 +151,11 @@ spec:
   priority: 1
   isActive: true
 ```
+
+- `spec.holdOnCircuitOpen` (default `true`) holds deliveries while the route's circuit breaker is
+  open and sends them once it recovers; `false` dead-letters them instead.
+- Removing every `failoverDestinationRefs` entry clears the route's failover destinations in
+  Hookbase.
 
 ### WebhookTunnel
 
@@ -167,7 +212,7 @@ See [`chart/values.yaml`](chart/values.yaml) for all options.
 | CRD | Description |
 |-----|-------------|
 | `WebhookSource` | Webhook ingestion endpoint (e.g., GitHub, Stripe) |
-| `WebhookDestination` | Target URL for delivering webhooks |
+| `WebhookDestination` | Where webhooks are delivered: an HTTP URL, a queue, object storage, or a bridge to outbound events |
 | `WebhookRoute` | Routes events from source to destination |
 | `WebhookTunnel` | Tunnel for forwarding to in-cluster services |
 | `WebhookFilter` | Filter conditions for routing |

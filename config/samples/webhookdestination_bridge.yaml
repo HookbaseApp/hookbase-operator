@@ -1,0 +1,17 @@
+# A bridge destination publishes each delivery it receives as an outbound event, to the endpoints
+# subscribed to its event type. It takes no url, headers, authType or useStaticIp, and the API key
+# it uses needs permission to send events.
+apiVersion: hookbase.io/v1alpha1
+kind: WebhookDestination
+metadata:
+  name: stripe-bridge
+spec:
+  name: Stripe bridge
+  type: bridge
+  bridge:
+    # "field" reads the event type from the payload; "fixed" publishes every delivery as eventType.
+    eventTypeSource: field
+    eventTypeField: type
+    eventTypePrefix: stripe.
+    # applicationId: 7c9e6679-7425-40de-944b-e07fc1f90ae7   # limit to one application's endpoints
+    # allowUnverifiedSources: true                          # also publish unverified senders

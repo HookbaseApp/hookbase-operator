@@ -11,6 +11,7 @@ type IngestMethod string
 //
 // Field names follow the Hookbase API's source schema (POST/PATCH /api/sources), which rejects
 // unknown keys with a 400.
+// +kubebuilder:validation:XValidation:rule="has(self.catalogProvider) == has(oldSelf.catalogProvider) && (!has(self.catalogProvider) || self.catalogProvider == oldSelf.catalogProvider)",message="spec.catalogProvider cannot be added, changed or removed after creation"
 type WebhookSourceSpec struct {
 	// Name of the source in Hookbase.
 	// +kubebuilder:validation:MinLength=1
@@ -34,6 +35,14 @@ type WebhookSourceSpec struct {
 	// Description of the source.
 	// +optional
 	Description string `json:"description,omitempty"`
+
+	// CatalogProvider is the provider-catalog entry the source is made from (an id from
+	// GET /api/catalog/providers), for a vendor that Hookbase verifies as a custom HMAC source.
+	// Recording it stops the vendor's shared IP ranges from counting as a verified sender for
+	// bridge destinations. It is sent on create only and cannot change afterwards.
+	// +kubebuilder:validation:MaxLength=100
+	// +optional
+	CatalogProvider string `json:"catalogProvider,omitempty"`
 
 	// SigningSecretRef references a K8s Secret key (default key "signingSecret") holding the
 	// signing secret. Its value is sent to the API on create, and again on update whenever the
@@ -70,11 +79,11 @@ type WebhookSourceSpec struct {
 	// +optional
 	IPFilterMode string `json:"ipFilterMode,omitempty"`
 
-	// IPAllowlist is a list of allowed CIDR ranges.
+	// IPAllowlist is a list of allowed CIDR ranges. Removing it clears the list in Hookbase.
 	// +optional
 	IPAllowlist []string `json:"ipAllowlist,omitempty"`
 
-	// IPDenylist is a list of denied CIDR ranges.
+	// IPDenylist is a list of denied CIDR ranges. Removing it clears the list in Hookbase.
 	// +optional
 	IPDenylist []string `json:"ipDenylist,omitempty"`
 
@@ -95,8 +104,8 @@ type WebhookSourceSpec struct {
 	TransientMode *bool `json:"transientMode,omitempty"`
 
 	// AllowedMethods restricts which HTTP methods the ingest endpoint accepts.
-	// Omit or leave empty to accept any method. OPTIONS is excluded because CORS
-	// preflight is answered before ingest runs.
+	// Omit or leave empty to accept any method (removing the list clears it in Hookbase). OPTIONS
+	// is excluded because CORS preflight is answered before ingest runs.
 	// +optional
 	AllowedMethods []IngestMethod `json:"allowedMethods,omitempty"`
 

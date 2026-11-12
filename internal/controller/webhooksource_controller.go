@@ -211,9 +211,6 @@ func (r *WebhookSourceReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 }
 
 const (
-	// ownedSecretKeySigningSecret is the key the API-generated signing secret is stored under in
-	// the operator-owned Secret, and the default key read from spec.signingSecretRef.
-	ownedSecretKeySigningSecret = "signingSecret"
 	// ownedSecretKeyVerifyToken is the key the API-generated Meta verify token is stored under in
 	// the operator-owned Secret, and the default key read from spec.verifyTokenRef.
 	ownedSecretKeyVerifyToken = "verifyToken"
@@ -221,9 +218,16 @@ const (
 	providerWhatsApp = "whatsapp"
 )
 
-// ownedSecretName is the operator-owned Secret holding API-generated credentials for a source.
-func ownedSecretName(source *hookbasev1alpha1.WebhookSource) string {
-	return fmt.Sprintf("%s-signing-secret", source.Name)
+// ownedSecret is the operator-owned Secret "<name>-signing-secret" holding API-generated
+// credentials for a source.
+func (r *WebhookSourceReconciler) ownedSecret(source *hookbasev1alpha1.WebhookSource) ownedSecret {
+	return ownedSecret{
+		c:      r.Client,
+		scheme: r.Scheme,
+		owner:  source,
+		kind:   "WebhookSource",
+		labels: map[string]string{"hookbase.io/source": source.Name},
+	}
 }
 
 // rejectInvalidSignatures resolves spec.rejectInvalidSignatures, falling back to the deprecated
@@ -299,6 +303,9 @@ func buildCreateSourceParams(source *hookbasev1alpha1.WebhookSource) *hookbasesd
 	if spec.Description != "" {
 		params.Description = &spec.Description
 	}
+	if spec.CatalogProvider != "" {
+		params.CatalogProvider = &spec.CatalogProvider
+	}
 	if spec.DedupStrategy != "" {
 		ds := hookbasesdk.DedupStrategy(spec.DedupStrategy)
 		params.DedupStrategy = &ds
@@ -311,7 +318,12 @@ func buildCreateSourceParams(source *hookbasev1alpha1.WebhookSource) *hookbasesd
 }
 
 // buildUpdateSourceParams maps the spec onto the API's update body, provider included. Secrets
-// from references are added by the caller.
+// from references are added by the caller. catalogProvider is not part of it: the API sets it on
+// create only.
+//
+// A list that is empty in the spec is cleared on the server with an explicit null: the SDK omits
+// empty lists, which leaves the server's list alone, so removing ipAllowlist, ipDenylist or
+// allowedMethods from a manifest would otherwise never take effect.
 func buildUpdateSourceParams(source *hookbasev1alpha1.WebhookSource) *hookbasesdk.UpdateSourceParams {
 	spec := &source.Spec
 	params := &hookbasesdk.UpdateSourceParams{
@@ -338,6 +350,15 @@ func buildUpdateSourceParams(source *hookbasev1alpha1.WebhookSource) *hookbasesd
 	if spec.IPFilterMode != "" {
 		mode := hookbasesdk.IPFilterMode(spec.IPFilterMode)
 		params.IPFilterMode = &mode
+	}
+	if len(spec.IPAllowlist) == 0 {
+		params.Clear = append(params.Clear, hookbasesdk.SourceIPAllowlist)
+	}
+	if len(spec.IPDenylist) == 0 {
+		params.Clear = append(params.Clear, hookbasesdk.SourceIPDenylist)
+	}
+	if len(spec.AllowedMethods) == 0 {
+		params.Clear = append(params.Clear, hookbasesdk.SourceAllowedMethods)
 	}
 	return params
 }
@@ -395,17 +416,16 @@ func (r *WebhookSourceReconciler) backfillOwnedSecret(ctx context.Context, sdkCl
 		return
 	}
 
-	existing := &corev1.Secret{}
-	err := r.Get(ctx, types.NamespacedName{Namespace: source.Namespace, Name: ownedSecretName(source)}, existing)
-	if err != nil && !apierrors.IsNotFound(err) {
+	existing, found, ours, err := r.ownedSecret(source).read(ctx)
+	if err != nil {
 		log.Error(err, "failed to read operator-owned Secret")
 		return
 	}
-	if err == nil && !metav1.IsControlledBy(existing, source) {
+	if found && !ours {
 		return // not ours; storeOwnedSecretKey would refuse anyway
 	}
 
-	if wantSecret && len(existing.Data[ownedSecretKeySigningSecret]) == 0 {
+	if wantSecret && len(existing[ownedSecretKeySigningSecret]) == 0 {
 		if value, err := sdkClient.Sources.RevealSecret(ctx, src.ID); err != nil {
 			log.Error(err, "failed to reveal signing secret for backfill", "sourceId", src.ID)
 		} else if value != "" {
@@ -414,7 +434,7 @@ func (r *WebhookSourceReconciler) backfillOwnedSecret(ctx context.Context, sdkCl
 			}
 		}
 	}
-	if wantToken && len(existing.Data[ownedSecretKeyVerifyToken]) == 0 {
+	if wantToken && len(existing[ownedSecretKeyVerifyToken]) == 0 {
 		if value, err := sdkClient.Sources.VerifyToken(ctx, src.ID); err != nil {
 			log.Error(err, "failed to read verify token for backfill", "sourceId", src.ID)
 		} else if value != "" {
@@ -429,42 +449,7 @@ func (r *WebhookSourceReconciler) backfillOwnedSecret(ctx context.Context, sdkCl
 // creating it (owned by the source, so it is garbage-collected with it) when missing. Other keys
 // are preserved. A Secret of that name that this source does not control is never modified.
 func (r *WebhookSourceReconciler) storeOwnedSecretKey(ctx context.Context, source *hookbasev1alpha1.WebhookSource, key, value string) error {
-	name := ownedSecretName(source)
-
-	existing := &corev1.Secret{}
-	err := r.Get(ctx, types.NamespacedName{Namespace: source.Namespace, Name: name}, existing)
-	if apierrors.IsNotFound(err) {
-		secret := &corev1.Secret{
-			ObjectMeta: metav1.ObjectMeta{
-				Name:      name,
-				Namespace: source.Namespace,
-				Labels: map[string]string{
-					"app.kubernetes.io/managed-by": "hookbase-operator",
-					"hookbase.io/source":           source.Name,
-				},
-			},
-			Type: corev1.SecretTypeOpaque,
-			Data: map[string][]byte{key: []byte(value)},
-		}
-		if err := controllerutil.SetControllerReference(source, secret, r.Scheme); err != nil {
-			return err
-		}
-		return r.Create(ctx, secret)
-	}
-	if err != nil {
-		return err
-	}
-	if !metav1.IsControlledBy(existing, source) {
-		return fmt.Errorf("Secret %s/%s exists and is not owned by WebhookSource %s; refusing to overwrite it", source.Namespace, name, source.Name)
-	}
-	if string(existing.Data[key]) == value {
-		return nil
-	}
-	if existing.Data == nil {
-		existing.Data = map[string][]byte{}
-	}
-	existing.Data[key] = []byte(value)
-	return r.Update(ctx, existing)
+	return r.ownedSecret(source).store(ctx, key, value)
 }
 
 // SetupWithManager sets up the controller with the Manager.

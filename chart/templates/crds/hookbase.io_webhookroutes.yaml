@@ -55,6 +55,7 @@ spec:
                 priority: {type: integer}
                 isActive: {type: boolean, default: true}
                 failoverDestinationRefs: {type: array, items: {type: string}}
+                holdOnCircuitOpen: {type: boolean, default: true}
                 circuitBreaker:
                   type: object
                   properties:

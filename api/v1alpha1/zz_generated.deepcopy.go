@@ -884,6 +884,11 @@ func (in *WebhookRouteSpec) DeepCopyInto(out *WebhookRouteSpec) {
 		*out = make([]string, len(*in))
 		copy(*out, *in)
 	}
+	if in.HoldOnCircuitOpen != nil {
+		in, out := &in.HoldOnCircuitOpen, &out.HoldOnCircuitOpen
+		*out = new(bool)
+		**out = **in
+	}
 	if in.CircuitBreaker != nil {
 		in, out := &in.CircuitBreaker, &out.CircuitBreaker
 		*out = new(CircuitBreakerConfig)

@@ -55,6 +55,10 @@ func (v *HookbaseValidator) validateWebhookSource(ctx context.Context, req admis
 		if oldSource.Spec.Slug != "" && source.Spec.Slug != oldSource.Spec.Slug {
 			return admission.Denied("spec.slug is immutable after creation")
 		}
+		// The API records a source's catalog entry on create only.
+		if source.Spec.CatalogProvider != oldSource.Spec.CatalogProvider {
+			return admission.Denied("spec.catalogProvider is immutable after creation")
+		}
 	}
 
 	// Validate CIDR ranges

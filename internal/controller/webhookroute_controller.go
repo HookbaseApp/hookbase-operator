@@ -166,6 +166,7 @@ func (r *WebhookRouteReconciler) Reconcile(ctx context.Context, req ctrl.Request
 			Priority:               route.Spec.Priority,
 			IsActive:               route.Spec.IsActive,
 			FailoverDestinationIDs: failoverIDs,
+			HoldOnCircuitOpen:      route.Spec.HoldOnCircuitOpen,
 		}
 		if route.Spec.FilterLogic != "" {
 			params.FilterLogic = &route.Spec.FilterLogic
@@ -203,6 +204,13 @@ func (r *WebhookRouteReconciler) Reconcile(ctx context.Context, req ctrl.Request
 			Priority:               route.Spec.Priority,
 			IsActive:               route.Spec.IsActive,
 			FailoverDestinationIDs: failoverIDs,
+			HoldOnCircuitOpen:      route.Spec.HoldOnCircuitOpen,
+		}
+		// The SDK omits an empty failover list, which leaves the server's alone, so removing every
+		// failoverDestinationRef needs an explicit null. Only when the spec names none: refs that
+		// are named but not synced yet must not wipe the server's list.
+		if len(route.Spec.FailoverDestinationRefs) == 0 {
+			params.Clear = append(params.Clear, hookbasesdk.RouteFailoverDestinationIDs)
 		}
 		if route.Spec.FilterLogic != "" {
 			params.FilterLogic = &route.Spec.FilterLogic

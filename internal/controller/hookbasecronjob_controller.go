@@ -108,9 +108,10 @@ func (r *HookbaseCronJobReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 			URL:         cron.Spec.URL,
 			Method:      &method,
 			Headers:     cron.Spec.Headers,
-			IsActive:    cron.Spec.IsActive,
 			UseStaticIP: cron.Spec.UseStaticIP,
 		}
+		// isActive is not part of create: the API starts every job active and the SDK does not
+		// send it. A job with spec.isActive false is paused by the next reconcile's update.
 		if cron.Spec.Description != "" {
 			params.Description = &cron.Spec.Description
 		}
@@ -142,9 +143,10 @@ func (r *HookbaseCronJobReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 			URL:         &cron.Spec.URL,
 			Method:      &method,
 			Headers:     cron.Spec.Headers,
-			IsActive:    cron.Spec.IsActive,
 			UseStaticIP: cron.Spec.UseStaticIP,
 		}
+		// isActive is not part of create: the API starts every job active and the SDK does not
+		// send it. A job with spec.isActive false is paused by the next reconcile's update.
 		if cron.Spec.Description != "" {
 			params.Description = &cron.Spec.Description
 		}

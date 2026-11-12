@@ -10,7 +10,8 @@ type WebhookSchemaSpec struct {
 	// Name of the schema in Hookbase.
 	Name string `json:"name"`
 
-	// Slug is the URL-friendly identifier. Immutable after creation.
+	// Slug is not sent: the Hookbase API always derives a schema's slug from its name and ignored
+	// this field. Kept so existing manifests still apply.
 	// +optional
 	Slug string `json:"slug,omitempty"`
 

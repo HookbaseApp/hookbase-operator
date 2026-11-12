@@ -2,6 +2,7 @@ package hookbase
 
 import (
 	"context"
+	"encoding/json"
 	"net/url"
 )
 
@@ -11,7 +12,20 @@ type TransformType string
 const (
 	TransformJSONata    TransformType = "jsonata"
 	TransformJavaScript TransformType = "javascript"
-	TransformMapping    TransformType = "mapping"
+	TransformXSLT       TransformType = "xslt"
+	TransformLiquid     TransformType = "liquid"
+
+	// TransformTypeScript is JavaScript with type annotations; types are stripped, not checked.
+	TransformTypeScript TransformType = "typescript"
+	TransformJMESPath   TransformType = "jmespath"
+	TransformJSONLogic  TransformType = "jsonlogic"
+	// TransformJQ needs transform isolation on the server. Without it the API answers
+	// TRANSFORM_ENGINE_UNAVAILABLE.
+	TransformJQ TransformType = "jq"
+
+	// Deprecated: the API has no "mapping" transform type and rejects it with a 400. Use one of
+	// the engines above.
+	TransformMapping TransformType = "mapping"
 )
 
 // ContentFormat represents the content format.
@@ -20,8 +34,10 @@ type ContentFormat string
 const (
 	ContentJSON ContentFormat = "json"
 	ContentXML  ContentFormat = "xml"
-	ContentForm ContentFormat = "form"
 	ContentText ContentFormat = "text"
+
+	// Deprecated: the API accepts only json, xml and text, and rejects "form" with a 400.
+	ContentForm ContentFormat = "form"
 )
 
 // Transform represents a webhook payload transformation.
@@ -35,9 +51,38 @@ type Transform struct {
 	Code           string        `json:"code"`
 	InputFormat    ContentFormat `json:"inputFormat"`
 	OutputFormat   ContentFormat `json:"outputFormat"`
-	Version        int           `json:"version"`
-	CreatedAt      string        `json:"createdAt"`
-	UpdatedAt      string        `json:"updatedAt"`
+	// IsActive reports whether routes may use the transform.
+	IsActive FlexBool `json:"isActive"`
+	// Deprecated: always 0; the API does not version transforms.
+	Version   int    `json:"-"`
+	CreatedAt string `json:"createdAt"`
+	UpdatedAt string `json:"updatedAt"`
+}
+
+// UnmarshalJSON also reads the snake_case transform_type, input_format and output_format keys
+// the Create response uses.
+func (t *Transform) UnmarshalJSON(data []byte) error {
+	type plain Transform
+	var w struct {
+		plain
+		TransformTypeSnake ContentFormat `json:"transform_type"`
+		InputFormatSnake   ContentFormat `json:"input_format"`
+		OutputFormatSnake  ContentFormat `json:"output_format"`
+	}
+	if err := json.Unmarshal(data, &w); err != nil {
+		return err
+	}
+	*t = Transform(w.plain)
+	if t.TransformType == "" {
+		t.TransformType = TransformType(w.TransformTypeSnake)
+	}
+	if t.InputFormat == "" {
+		t.InputFormat = w.InputFormatSnake
+	}
+	if t.OutputFormat == "" {
+		t.OutputFormat = w.OutputFormatSnake
+	}
+	return nil
 }
 
 // CreateTransformParams are the parameters for creating a transform.
@@ -59,6 +104,8 @@ type UpdateTransformParams struct {
 	Code          *string        `json:"code,omitempty"`
 	InputFormat   *ContentFormat `json:"inputFormat,omitempty"`
 	OutputFormat  *ContentFormat `json:"outputFormat,omitempty"`
+	// IsActive enables or disables the transform.
+	IsActive *bool `json:"isActive,omitempty"`
 }
 
 // ListTransformsParams are the parameters for listing transforms.
@@ -90,12 +137,45 @@ type TransformTestParams struct {
 	Payload       interface{}    `json:"payload"`
 }
 
-// TransformTestResult is the result of testing a transform.
+// TransformTestResult is the result of testing a transform. A transform that fails to run is
+// reported here with Success false and Error set, not as an error from Test.
+//
+// The API answers with `result`/`contentType` (api/src/routes/transforms.ts); Output keeps its
+// name as the SDK's public contract and the tag maps it onto `result`.
 type TransformTestResult struct {
-	Success         bool        `json:"success"`
-	Output          interface{} `json:"output,omitempty"`
-	Error           *string     `json:"error,omitempty"`
-	ExecutionTimeMs *int        `json:"executionTimeMs,omitempty"`
+	Success bool `json:"success"`
+	// Output is the transform's output (the API's result): parsed JSON when the output is JSON,
+	// otherwise a string.
+	Output interface{} `json:"result,omitempty"`
+	// ContentType is the output's content type, e.g. application/json.
+	ContentType string  `json:"contentType,omitempty"`
+	Error       *string `json:"error,omitempty"`
+
+	// Deprecated: always nil; the API does not report an execution time.
+	ExecutionTimeMs *int `json:"-"`
+}
+
+// TransformEngine is one transform language the API supports, as GET /api/transforms/engines
+// lists it.
+type TransformEngine struct {
+	Type          TransformType `json:"type"`
+	Label         string        `json:"label"`
+	Description   string        `json:"description"`
+	FileExtension string        `json:"fileExtension"`
+	// StarterCode is a working example in this language, for an editor to start from.
+	StarterCode string `json:"starterCode"`
+	// AIGenerate reports whether the dashboard's AI assistant can write code in this language.
+	AIGenerate bool `json:"aiGenerate"`
+	// Available is false when the language needs transform isolation and this deployment has it
+	// off. Creating or testing a transform in it then fails with TRANSFORM_ENGINE_UNAVAILABLE.
+	Available bool `json:"available"`
+}
+
+// TransformEnginesResponse is what Engines returns: the transform languages and the content
+// formats a transform's input and output can use.
+type TransformEnginesResponse struct {
+	Engines        []TransformEngine `json:"engines"`
+	ContentFormats []ContentFormat   `json:"contentFormats"`
 }
 
 // TransformsResource provides access to transform-related API endpoints.
@@ -166,6 +246,16 @@ func (r *TransformsResource) Delete(ctx context.Context, id string, opts ...Requ
 func (r *TransformsResource) Test(ctx context.Context, params *TransformTestParams, opts ...RequestOption) (*TransformTestResult, error) {
 	var resp TransformTestResult
 	if err := r.t.do(ctx, "POST", "/api/transforms/test", nil, params, &resp, opts...); err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}
+
+// Engines lists the transform languages this deployment supports, with starter code for each and
+// whether it is available. Use it to offer only the languages the API will accept.
+func (r *TransformsResource) Engines(ctx context.Context, opts ...RequestOption) (*TransformEnginesResponse, error) {
+	var resp TransformEnginesResponse
+	if err := r.t.do(ctx, "GET", "/api/transforms/engines", nil, nil, &resp, opts...); err != nil {
 		return nil, err
 	}
 	return &resp, nil

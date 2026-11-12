@@ -89,9 +89,6 @@ func (r *WebhookSchemaReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 			Name:       schema.Spec.Name,
 			JSONSchema: jsonSchemaMap,
 		}
-		if schema.Spec.Slug != "" {
-			params.Slug = &schema.Spec.Slug
-		}
 		if schema.Spec.Description != "" {
 			params.Description = &schema.Spec.Description
 		}

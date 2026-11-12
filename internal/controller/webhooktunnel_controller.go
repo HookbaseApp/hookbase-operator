@@ -103,9 +103,10 @@ func (r *WebhookTunnelReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 
 	if tunnel.Status.TunnelID == "" {
 		// CREATE
+		// The local port is not part of the API's tunnel: the agent sidecar forwards to
+		// spec.targetPort itself.
 		params := &hookbasesdk.CreateTunnelParams{
-			Name:      tunnel.Spec.Name,
-			LocalPort: tunnel.Spec.TargetPort,
+			Name: tunnel.Spec.Name,
 		}
 		if tunnel.Spec.Subdomain != "" {
 			params.Subdomain = &tunnel.Spec.Subdomain
@@ -122,8 +123,8 @@ func (r *WebhookTunnelReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 		}
 
 		tunnel.Status.TunnelID = apiTunnel.ID
-		if apiTunnel.PublicURL != nil {
-			tunnel.Status.PublicURL = *apiTunnel.PublicURL
+		if apiTunnel.TunnelURL != nil {
+			tunnel.Status.PublicURL = *apiTunnel.TunnelURL
 		}
 
 		// Store auth token in a K8s Secret (only available on create)

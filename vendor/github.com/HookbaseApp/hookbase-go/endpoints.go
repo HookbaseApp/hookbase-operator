@@ -3,6 +3,7 @@ package hookbase
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/url"
 	"sort"
@@ -96,15 +97,94 @@ func (s SuccessStatusCode) String() string {
 	return itoa(s.Code)
 }
 
+// SignatureScheme is how Hookbase signs an endpoint's deliveries (Standard Webhooks).
+type SignatureScheme string
+
+const (
+	// SignatureSchemeHMACSHA256 signs with a shared secret: "v1,<base64>" entries. The default.
+	SignatureSchemeHMACSHA256 SignatureScheme = "hmac-sha256"
+	// SignatureSchemeEd25519 signs with a private key Hookbase keeps: "v1a,<base64>" entries,
+	// verified with the endpoint's public key.
+	SignatureSchemeEd25519 SignatureScheme = "ed25519"
+)
+
+// EndpointType is what an endpoint delivers to.
+type EndpointType string
+
+const (
+	// EndpointTypeHTTP POSTs each webhook to the endpoint's URL. The default.
+	EndpointTypeHTTP EndpointType = "http"
+	// The provider kinds publish to a cloud service configured in Destination instead of a URL.
+	EndpointTypeSQS         EndpointType = "sqs"
+	EndpointTypeSNS         EndpointType = "sns"
+	EndpointTypeEventBridge EndpointType = "eventbridge"
+	EndpointTypePubSub      EndpointType = "pubsub"
+	EndpointTypeS3          EndpointType = "s3"
+	// EndpointTypePolling holds messages for a consumer to pull from PollURL with the poll token
+	// returned on create.
+	EndpointTypePolling EndpointType = "polling"
+)
+
+// Endpoint authentication types, for EndpointAuthentication.Type.
+const (
+	EndpointAuthBasic                  = "basic"
+	EndpointAuthOAuth2ClientCredential = "oauth2_client_credentials"
+)
+
+// EndpointAuthentication is the Authorization Hookbase sends with each delivery: HTTP Basic, or an
+// OAuth2 client-credentials token it fetches and caches.
+//
+// On a request, set Type and that type's fields. On an update of the same type, leaving Password
+// or ClientSecret empty keeps the stored one. In a response the secrets are never returned: only
+// Type and the non-secret fields are set.
+type EndpointAuthentication struct {
+	// Type is EndpointAuthBasic or EndpointAuthOAuth2ClientCredential.
+	Type string `json:"type"`
+
+	// Basic. Username must not contain ":".
+	Username string `json:"username,omitempty"`
+	Password string `json:"password,omitempty"`
+
+	// OAuth2 client credentials.
+	TokenURL     string  `json:"tokenUrl,omitempty"`
+	ClientID     string  `json:"clientId,omitempty"`
+	ClientSecret string  `json:"clientSecret,omitempty"`
+	Scope        *string `json:"scope,omitempty"`
+	Audience     *string `json:"audience,omitempty"`
+	// ClientAuthMethod is "client_secret_basic" (the default) or "client_secret_post".
+	ClientAuthMethod string `json:"clientAuthMethod,omitempty"`
+}
+
 // Endpoint represents an outbound webhook endpoint as the API returns it.
 //
 // List and Get mask the signing secret: they set SecretPrefix and HasSecret. Secret carries the
 // full value only on the Create response, which is the one time the API returns it.
 type Endpoint struct {
-	ID            string  `json:"id"`
-	ApplicationID string  `json:"applicationId"`
-	URL           string  `json:"url"`
-	Description   *string `json:"description"`
+	ID            string `json:"id"`
+	ApplicationID string `json:"applicationId"`
+	// EndpointType is what the endpoint delivers to: EndpointTypeHTTP, a provider kind, or
+	// EndpointTypePolling.
+	EndpointType EndpointType `json:"endpointType"`
+	// URL is the delivery URL for an HTTP endpoint. For a provider kind it is a display URI
+	// (sqs://..., s3://...); for a polling endpoint, where the consumer pulls from.
+	URL string `json:"url"`
+	// Destination is a provider endpoint's settings, with credentials reduced to hints
+	// (accessKeyIdHint, hasCredentials ...). Nil for HTTP and polling endpoints.
+	Destination map[string]interface{} `json:"destination"`
+	// PollURL is where a polling endpoint's consumer pulls messages from; nil for other kinds.
+	PollURL *string `json:"pollUrl"`
+	// PollToken is a polling endpoint's consumer token (whpoll_...). It is set only on the Create
+	// response; only its hash is stored.
+	PollToken *string `json:"pollToken,omitempty"`
+	// FIFOEnabled reports strictly ordered, one-at-a-time delivery.
+	FIFOEnabled FlexBool `json:"fifoEnabled"`
+	// Authentication is the delivery Authorization configured on the endpoint, without its
+	// secrets. Nil when there is none.
+	Authentication *EndpointAuthentication `json:"authentication"`
+	// FailingSince is the start of the endpoint's current run of failed deliveries; nil when the
+	// last delivery succeeded. Hookbase disables an endpoint that keeps failing for 5 days.
+	FailingSince *string `json:"failingSince"`
+	Description  *string `json:"description"`
 	// Secret is the full signing secret. It is populated only by Create; save it then, because
 	// no later response repeats it.
 	Secret string `json:"secret"`
@@ -113,6 +193,13 @@ type Endpoint struct {
 	// HasSecret reports whether a signing secret is set. The secret itself is masked.
 	HasSecret     FlexBool `json:"hasSecret"`
 	SecretVersion int      `json:"secretVersion"`
+	// SignatureScheme is how deliveries are signed: SignatureSchemeHMACSHA256 ("v1" entries,
+	// verified with the secret) or SignatureSchemeEd25519 ("v1a" entries, verified with PublicKey).
+	SignatureScheme SignatureScheme `json:"signatureScheme"`
+	// PublicKey is the Ed25519 public key ("whpk_...") that verifies this endpoint's "v1a"
+	// signatures; pass it to NewWebhookPublicKey. Nil for HMAC endpoints. The private key never
+	// leaves Hookbase.
+	PublicKey *string `json:"publicKey"`
 	// Headers are the custom headers sent with every delivery.
 	Headers []EndpointHeader `json:"headers"`
 	// TimeoutSeconds is the per-delivery request timeout. The API defaults it to 30.
@@ -160,6 +247,16 @@ type Endpoint struct {
 	IPAllowlistNotes *string `json:"ipAllowlistNotes"`
 	// UseStaticIP reports whether deliveries go through the dedicated static-IP proxy.
 	UseStaticIP FlexBool `json:"useStaticIp"`
+	// HoldOnCircuitOpen reports whether messages wait while the endpoint's circuit breaker is open
+	// (MessageHeld) and are sent once it recovers. When it is false, a message is dead-lettered as
+	// soon as it meets the open circuit. The API defaults it to true. FIFO and polling endpoints
+	// never hold.
+	HoldOnCircuitOpen bool `json:"holdOnCircuitOpen"`
+	// HeldCount is the number of messages held for this endpoint, counted up to 10,000, and
+	// HeldCountCapped is true when there are more. Only Get sets them; List, Create and Update
+	// leave them zero.
+	HeldCount       int  `json:"heldCount"`
+	HeldCountCapped bool `json:"heldCountCapped"`
 
 	// The fields below name response keys the API has never sent. They decoded to the zero value
 	// on every version of this SDK that declared them, so reading one has always told you nothing
@@ -187,7 +284,13 @@ type EndpointStats struct {
 	TotalFailures  int     `json:"totalFailures"`
 	SuccessRate    float64 `json:"successRate"`
 	AverageLatency float64 `json:"averageLatency"`
-	RecentFailures int     `json:"recentFailures"`
+	// RecentFailures is the number of the endpoint's messages that failed in the last 24 hours
+	// (failed, exhausted, dead-lettered or awaiting a retry), from the endpoint analytics route. It
+	// stays 0 when the API key may not read outbound analytics (outboundMessages:read).
+	RecentFailures int `json:"recentFailures"`
+	// ConsecutiveFailures is the endpoint's current run of failed deliveries, the count that opens
+	// its circuit breaker (Endpoint.CircuitFailureCount).
+	ConsecutiveFailures int `json:"consecutiveFailures"`
 }
 
 // CreateEndpointParams are the parameters for creating an endpoint.
@@ -199,8 +302,19 @@ type CreateEndpointParams struct {
 	// The field exists because the API takes applicationId in the body, so a marshalled
 	// CreateEndpointParams is the whole request.
 	ApplicationID string `json:"applicationId,omitempty"`
-	// URL is required. It must be HTTPS and must not resolve to a private or internal address.
-	URL string `json:"url"`
+	// EndpointType is what the endpoint delivers to. The API defaults to EndpointTypeHTTP.
+	EndpointType *EndpointType `json:"endpointType,omitempty"`
+	// URL is required for an HTTP endpoint. It must be HTTPS and must not resolve to a private or
+	// internal address. Provider and polling endpoints take no URL.
+	URL string `json:"url,omitempty"`
+	// Destination is a provider endpoint's settings and credentials (queue URL, region, keys ...),
+	// required for the provider kinds.
+	Destination map[string]interface{} `json:"destination,omitempty"`
+	// Authentication sets the Authorization sent with each delivery.
+	Authentication *EndpointAuthentication `json:"authentication,omitempty"`
+	// FIFOEnabled delivers the endpoint's messages one at a time, in order (Pro and Business; not
+	// for polling endpoints).
+	FIFOEnabled *bool `json:"fifoEnabled,omitempty"`
 	// Description is at most 500 characters.
 	Description *string `json:"description,omitempty"`
 	// HeaderList is the custom headers to send with every delivery, at most 10. Header names must
@@ -231,6 +345,14 @@ type CreateEndpointParams struct {
 	CircuitSuccessThreshold *int `json:"circuitSuccessThreshold,omitempty"`
 	// CircuitCooldownSeconds is how long an open circuit waits before retrying, 10 to 3600.
 	CircuitCooldownSeconds *int `json:"circuitCooldownSeconds,omitempty"`
+	// HoldOnCircuitOpen holds messages while the circuit breaker is open, to be sent once it
+	// recovers. False dead-letters a message as soon as it meets the open circuit. Nil uses the
+	// API's default, true.
+	HoldOnCircuitOpen *bool `json:"holdOnCircuitOpen,omitempty"`
+	// SignatureScheme picks how deliveries are signed. The API defaults to
+	// SignatureSchemeHMACSHA256. With SignatureSchemeEd25519 Hookbase generates the key pair and the
+	// response carries only Endpoint.PublicKey, with no Secret.
+	SignatureScheme *SignatureScheme `json:"signatureScheme,omitempty"`
 
 	// The fields below are tagged json:"-" and never reach the wire under these names. The API's
 	// create schema is becoming strict, so a key it does not accept is a 400 rather than a
@@ -283,6 +405,8 @@ const (
 	EndpointBackoffType        EndpointField = "backoffType"
 	EndpointRetryDelays        EndpointField = "retryDelays"
 	EndpointIPAllowlistNotes   EndpointField = "ipAllowlistNotes"
+	// EndpointAuth removes the endpoint's delivery authentication.
+	EndpointAuth EndpointField = "authentication"
 )
 
 // clearableEndpointFields is the allowlist behind Clear. A field the API does not accept null for
@@ -293,13 +417,23 @@ var clearableEndpointFields = map[EndpointField]bool{
 	EndpointBackoffType:        true,
 	EndpointRetryDelays:        true,
 	EndpointIPAllowlistNotes:   true,
+	EndpointAuth:               true,
 }
 
 // UpdateEndpointParams are the parameters for updating an endpoint.
 //
 // Every field is optional: only the ones set are sent, and only the settings sent are changed.
 type UpdateEndpointParams struct {
-	URL *string `json:"url,omitempty"`
+	// EndpointType changes the endpoint's kind; send the new kind's URL (http) or Destination
+	// (provider kinds) in the same request.
+	EndpointType *EndpointType `json:"endpointType,omitempty"`
+	URL          *string       `json:"url,omitempty"`
+	// Destination replaces a provider endpoint's settings; credentials left out are kept.
+	Destination map[string]interface{} `json:"destination,omitempty"`
+	// Authentication replaces the delivery authentication. Name EndpointAuth in Clear to remove it.
+	Authentication *EndpointAuthentication `json:"authentication,omitempty"`
+	// FIFOEnabled turns ordered delivery on (Pro and Business) or off.
+	FIFOEnabled *bool `json:"fifoEnabled,omitempty"`
 	// Description is at most 500 characters.
 	Description *string `json:"description,omitempty"`
 	IsDisabled  *bool   `json:"isDisabled,omitempty"`
@@ -323,6 +457,12 @@ type UpdateEndpointParams struct {
 	CircuitFailureThreshold *int    `json:"circuitFailureThreshold,omitempty"`
 	CircuitSuccessThreshold *int    `json:"circuitSuccessThreshold,omitempty"`
 	CircuitCooldownSeconds  *int    `json:"circuitCooldownSeconds,omitempty"`
+	// HoldOnCircuitOpen turns holding messages while the circuit breaker is open on or off. With
+	// it off, a message is dead-lettered as soon as it meets the open circuit.
+	HoldOnCircuitOpen *bool `json:"holdOnCircuitOpen,omitempty"`
+	// SignatureScheme switches the signing scheme. Switching generates a fresh key of the new kind
+	// and ends any rotation grace period, since a receiver cannot verify across schemes.
+	SignatureScheme *SignatureScheme `json:"signatureScheme,omitempty"`
 
 	// Clear names settings to reset to their defaults. Every other field on this struct is a
 	// pointer or a slice, where nil means "leave this alone" -- so nil cannot also mean "set this
@@ -331,7 +471,7 @@ type UpdateEndpointParams struct {
 	//
 	//	params := UpdateEndpointParams{Clear: []EndpointField{EndpointRetryDelays}}
 	//
-	// Only the five fields the API accepts null for are allowed; anything else, or a field that is
+	// Only the six fields the API accepts null for are allowed; anything else, or a field that is
 	// also set on this struct, is a marshalling error rather than a silent choice between them.
 	Clear []EndpointField `json:"-"`
 
@@ -410,10 +550,19 @@ func headersFromMap(m map[string]string) []EndpointHeader {
 }
 
 // ListEndpointsParams are the parameters for listing endpoints.
+//
+// Pagination is by cursor: pass the previous page's NextCursor back unchanged as Cursor, and
+// stop when HasMore is false.
 type ListEndpointsParams struct {
-	Limit      *int  `json:"limit,omitempty"`
-	Offset     *int  `json:"offset,omitempty"`
-	IsDisabled *bool `json:"isDisabled,omitempty"`
+	Limit      *int    `json:"limit,omitempty"`
+	Cursor     *string `json:"cursor,omitempty"`
+	IsDisabled *bool   `json:"isDisabled,omitempty"`
+	// CircuitState lists only endpoints whose circuit breaker is in this state.
+	CircuitState *EndpointCircuitState `json:"circuitState,omitempty"`
+
+	// Deprecated: the API pages by cursor and ignores offsets; this is no longer sent. Use
+	// Cursor.
+	Offset *int `json:"-"`
 }
 
 func (p *ListEndpointsParams) toQuery() url.Values {
@@ -424,11 +573,14 @@ func (p *ListEndpointsParams) toQuery() url.Values {
 	if p.Limit != nil {
 		q.Set("limit", itoa(*p.Limit))
 	}
-	if p.Offset != nil {
-		q.Set("offset", itoa(*p.Offset))
+	if p.Cursor != nil {
+		q.Set("cursor", *p.Cursor)
 	}
 	if p.IsDisabled != nil {
 		q.Set("isDisabled", btoa(*p.IsDisabled))
+	}
+	if p.CircuitState != nil {
+		q.Set("circuitState", string(*p.CircuitState))
 	}
 	return q
 }
@@ -466,11 +618,19 @@ func (r *EndpointsResource) List(ctx context.Context, applicationID string, para
 }
 
 // Get returns an endpoint by ID.
+//
+// The API looks endpoints up by ID within the organization. When applicationID is not empty, Get
+// also checks that the endpoint belongs to that application and returns a *NotFoundError when it
+// does not, so an endpoint of another application is not mistaken for one of this application's.
+// Pass "" to skip the check.
 func (r *EndpointsResource) Get(ctx context.Context, applicationID, endpointID string, opts ...RequestOption) (*Endpoint, error) {
 	var resp struct {
 		Data Endpoint `json:"data"`
 	}
 	if err := r.t.do(ctx, "GET", "/api/webhook-endpoints/"+url.PathEscape(endpointID), nil, nil, &resp, opts...); err != nil {
+		return nil, err
+	}
+	if err := checkApplication("endpoint", endpointID, applicationID, resp.Data.ApplicationID); err != nil {
 		return nil, err
 	}
 	return &resp.Data, nil
@@ -482,7 +642,10 @@ func (r *EndpointsResource) Get(ctx context.Context, applicationID, endpointID s
 // than the hand-copied subset this used to assemble — which sent four keys the API never accepted
 // and dropped every field added since.
 func (r *EndpointsResource) Create(ctx context.Context, applicationID string, params *CreateEndpointParams, opts ...RequestOption) (*Endpoint, error) {
-	body := *params
+	var body CreateEndpointParams
+	if params != nil {
+		body = *params
+	}
 	if applicationID != "" {
 		body.ApplicationID = applicationID
 	}
@@ -495,8 +658,12 @@ func (r *EndpointsResource) Create(ctx context.Context, applicationID string, pa
 	return &resp.Data, nil
 }
 
-// Update updates an endpoint.
+// Update updates an endpoint. When applicationID is not empty, Update first checks that the
+// endpoint belongs to that application (see Get), so a mismatch changes nothing.
 func (r *EndpointsResource) Update(ctx context.Context, applicationID, endpointID string, params *UpdateEndpointParams, opts ...RequestOption) (*Endpoint, error) {
+	if err := r.ensureApplication(ctx, applicationID, endpointID, opts); err != nil {
+		return nil, err
+	}
 	var resp struct {
 		Data Endpoint `json:"data"`
 	}
@@ -506,20 +673,75 @@ func (r *EndpointsResource) Update(ctx context.Context, applicationID, endpointI
 	return &resp.Data, nil
 }
 
-// Delete deletes an endpoint.
+// Delete deletes an endpoint. When applicationID is not empty, Delete first checks that the
+// endpoint belongs to that application (see Get).
 func (r *EndpointsResource) Delete(ctx context.Context, applicationID, endpointID string, opts ...RequestOption) error {
+	if err := r.ensureApplication(ctx, applicationID, endpointID, opts); err != nil {
+		return err
+	}
 	return r.t.do(ctx, "DELETE", "/api/webhook-endpoints/"+url.PathEscape(endpointID), nil, nil, nil, opts...)
 }
 
-// RotateSecret rotates the signing secret for an endpoint.
+// RotateSecretParams are the parameters for rotating an endpoint's signing secret.
+type RotateSecretParams struct {
+	// GracePeriodSeconds is how long (0 to 86400) the previous secret stays valid. The API
+	// defaults to 3600 when nil.
+	GracePeriodSeconds *int `json:"gracePeriodSeconds,omitempty"`
+}
+
+// RotateSecretResult is the result of rotating an endpoint's signing secret.
+//
+// Rotation keeps the endpoint's scheme. For an HMAC endpoint Secret is the new secret; for an
+// Ed25519 endpoint Secret is empty (the private key never leaves Hookbase) and PublicKey and
+// PreviousPublicKey are set instead.
+type RotateSecretResult struct {
+	// SignatureScheme is the endpoint's scheme, unchanged by the rotation.
+	SignatureScheme SignatureScheme `json:"signatureScheme"`
+	// Secret is the new HMAC signing secret. It is only ever returned here. Empty for Ed25519.
+	Secret string `json:"secret"`
+	// PublicKey is the new Ed25519 public key ("whpk_..."). Empty for HMAC.
+	PublicKey string `json:"publicKey"`
+	// PreviousPublicKey is the Ed25519 public key being rotated out. It still verifies the first
+	// "v1a" entry until PreviousSecretExpiresAt. Nil for HMAC.
+	PreviousPublicKey *string `json:"previousPublicKey"`
+	// PreviousSecretExpiresAt is when the previous secret (or key) stops being used.
+	PreviousSecretExpiresAt string `json:"previousSecretExpiresAt"`
+	SecretVersion           int    `json:"secretVersion"`
+}
+
+// RotateSecret rotates the signing key for an endpoint and returns what receivers verify with
+// next: the new secret for an HMAC endpoint, or the new public key ("whpk_...") for an Ed25519
+// one. The previous key stays valid for the API's default grace period; use
+// RotateSecretWithParams to set it, or to read the scheme, expiry and version.
 func (r *EndpointsResource) RotateSecret(ctx context.Context, applicationID, endpointID string, opts ...RequestOption) (string, error) {
-	var resp struct {
-		Secret string `json:"secret"`
-	}
-	if err := r.t.do(ctx, "POST", "/api/webhook-endpoints/"+url.PathEscape(endpointID)+"/rotate-secret", nil, nil, &resp, opts...); err != nil {
+	res, err := r.RotateSecretWithParams(ctx, applicationID, endpointID, nil, opts...)
+	if err != nil {
 		return "", err
 	}
-	return resp.Secret, nil
+	if res.SignatureScheme == SignatureSchemeEd25519 {
+		return res.PublicKey, nil
+	}
+	return res.Secret, nil
+}
+
+// RotateSecretWithParams rotates the signing secret for an endpoint.
+//
+// It is not retried after a server error or a lost connection, since a second rotation would
+// replace the secret the first one returned. The API does not deduplicate rotations, so
+// WithIdempotencyKey doesn't change this.
+func (r *EndpointsResource) RotateSecretWithParams(ctx context.Context, applicationID, endpointID string, params *RotateSecretParams, opts ...RequestOption) (*RotateSecretResult, error) {
+	if err := r.ensureApplication(ctx, applicationID, endpointID, opts); err != nil {
+		return nil, err
+	}
+	var body interface{}
+	if params != nil {
+		body = params
+	}
+	var resp RotateSecretResult
+	if err := r.t.do(ctx, "POST", "/api/webhook-endpoints/"+url.PathEscape(endpointID)+"/rotate-secret", nil, body, &resp, opts...); err != nil {
+		return nil, err
+	}
+	return &resp, nil
 }
 
 // Enable enables a disabled endpoint.
@@ -532,7 +754,9 @@ func (r *EndpointsResource) Disable(ctx context.Context, applicationID, endpoint
 	return r.Update(ctx, applicationID, endpointID, &UpdateEndpointParams{IsDisabled: Ptr(true)}, opts...)
 }
 
-// GetStats returns statistics for an endpoint.
+// GetStats returns statistics for an endpoint: its lifetime delivery counters (from Get) and the
+// failures of the last 24 hours (from GET /api/webhooks/analytics/endpoints/:id), so it makes two
+// requests.
 func (r *EndpointsResource) GetStats(ctx context.Context, applicationID, endpointID string, opts ...RequestOption) (*EndpointStats, error) {
 	ep, err := r.Get(ctx, applicationID, endpointID, opts...)
 	if err != nil {
@@ -551,22 +775,121 @@ func (r *EndpointsResource) GetStats(ctx context.Context, applicationID, endpoin
 	if ep.AvgResponseTimeMs != nil {
 		stats.AverageLatency = *ep.AvgResponseTimeMs
 	}
+	stats.ConsecutiveFailures = ep.CircuitFailureCount
+
+	var analytics struct {
+		Data struct {
+			Stats struct {
+				Failed int `json:"failed"`
+			} `json:"stats"`
+		} `json:"data"`
+	}
+	err = r.t.do(ctx, "GET", "/api/webhooks/analytics/endpoints/"+url.PathEscape(endpointID), url.Values{"timeRange": {"24h"}}, nil, &analytics, opts...)
+	var forbidden *ForbiddenError
+	switch {
+	case err == nil:
+		stats.RecentFailures = analytics.Data.Stats.Failed
+	case errors.As(err, &forbidden):
+		// The key may read endpoints but not outbound analytics: return the counters it can see.
+	default:
+		return nil, err
+	}
 	return stats, nil
 }
 
 // RecoverCircuit resets the circuit breaker for an endpoint.
 func (r *EndpointsResource) RecoverCircuit(ctx context.Context, applicationID, endpointID string, opts ...RequestOption) (*Endpoint, error) {
+	if err := r.ensureApplication(ctx, applicationID, endpointID, opts); err != nil {
+		return nil, err
+	}
 	if err := r.t.do(ctx, "POST", "/api/webhook-endpoints/"+url.PathEscape(endpointID)+"/reset-circuit", nil, nil, nil, opts...); err != nil {
 		return nil, err
 	}
-	return r.Get(ctx, applicationID, endpointID, opts...)
+	return r.Get(ctx, "", endpointID, opts...)
 }
 
-// Test sends a test event to an endpoint.
+// Test sends a test event to an endpoint and returns the decoded JSON response. TestWithParams
+// sets the event type and payload and returns a typed result.
 func (r *EndpointsResource) Test(ctx context.Context, applicationID, endpointID string, opts ...RequestOption) (interface{}, error) {
+	if err := r.ensureApplication(ctx, applicationID, endpointID, opts); err != nil {
+		return nil, err
+	}
 	var resp interface{}
 	if err := r.t.do(ctx, "POST", "/api/webhook-endpoints/"+url.PathEscape(endpointID)+"/test", nil, nil, &resp, opts...); err != nil {
 		return nil, err
 	}
 	return resp, nil
+}
+
+// TestEndpointParams are the optional parameters for TestWithParams.
+type TestEndpointParams struct {
+	// EventType is the test event's type. The API defaults to a test event type.
+	EventType *string `json:"eventType,omitempty"`
+	// Payload is the test event's data.
+	Payload map[string]interface{} `json:"payload,omitempty"`
+}
+
+// EndpointTestResult is the result of sending a test event to an endpoint.
+type EndpointTestResult struct {
+	// Success reports whether the endpoint answered with a success status.
+	Success   bool `json:"success"`
+	TestEvent struct {
+		ID        string `json:"id"`
+		Type      string `json:"type"`
+		Timestamp string `json:"timestamp"`
+	} `json:"testEvent"`
+	Delivery struct {
+		// Status is "success" or "failed".
+		Status         string  `json:"status"`
+		ResponseStatus *int    `json:"responseStatus"`
+		ResponseTimeMs *int    `json:"responseTimeMs"`
+		ResponseBody   string  `json:"responseBody"`
+		ErrorMessage   *string `json:"errorMessage"`
+	} `json:"delivery"`
+	// Signature is the webhook-signature header the test was signed with.
+	Signature struct {
+		Header    string      `json:"header"`
+		Value     string      `json:"value"`
+		Timestamp json.Number `json:"timestamp"`
+	} `json:"signature"`
+}
+
+// TestWithParams sends a test event to an endpoint, with an optional event type and payload, and
+// returns the delivery outcome. Like every POST but sending an event it is not retried after a
+// server error, with or without WithIdempotencyKey, so the test is not delivered twice.
+func (r *EndpointsResource) TestWithParams(ctx context.Context, applicationID, endpointID string, params *TestEndpointParams, opts ...RequestOption) (*EndpointTestResult, error) {
+	if err := r.ensureApplication(ctx, applicationID, endpointID, opts); err != nil {
+		return nil, err
+	}
+	if params == nil {
+		params = &TestEndpointParams{}
+	}
+	var resp EndpointTestResult
+	if err := r.t.do(ctx, "POST", "/api/webhook-endpoints/"+url.PathEscape(endpointID)+"/test", nil, params, &resp, opts...); err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}
+
+// ensureApplication checks, before a by-ID call with side effects, that the endpoint belongs to
+// applicationID. It costs one GET, and none when applicationID is empty.
+func (r *EndpointsResource) ensureApplication(ctx context.Context, applicationID, endpointID string, opts []RequestOption) error {
+	if applicationID == "" {
+		return nil
+	}
+	_, err := r.Get(ctx, applicationID, endpointID, opts...)
+	return err
+}
+
+// checkApplication returns a *NotFoundError when want is set and the resource's application got
+// differs from it. The API scopes by-ID lookups to the organization only.
+func checkApplication(kind, id, want, got string) error {
+	if want == "" || got == "" || want == got {
+		return nil
+	}
+	return &NotFoundError{APIError: APIError{
+		Message: fmt.Sprintf("%s %s does not belong to application %s", kind, id, want),
+		Status:  404,
+		Code:    "application_mismatch",
+	}}
 }

@@ -2,6 +2,8 @@ package hookbase
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"net/url"
 )
 
@@ -40,9 +42,65 @@ type Route struct {
 	FailureThreshold             *int                          `json:"failureThreshold"`
 	FailoverDestinationIDs       []string                      `json:"failoverDestinationIds"`
 	FailoverAfterAttempts        *int                          `json:"failoverAfterAttempts"`
-	ExpectedResponse             *string                       `json:"expectedResponse"`
-	CreatedAt                    string                        `json:"createdAt"`
-	UpdatedAt                    string                        `json:"updatedAt"`
+	// ExpectedResponse is the route's expected-response rule as JSON text, e.g.
+	// `{"statusCodes":[200]}`; nil when none is set. The API returns the parsed object, which this
+	// field used to fail to decode, failing the whole List or Get.
+	ExpectedResponse *string `json:"expectedResponse"`
+	CreatedAt        string  `json:"createdAt"`
+	UpdatedAt        string  `json:"updatedAt"`
+	// HoldOnCircuitOpen reports whether deliveries wait while the route's circuit breaker is open
+	// (DeliveryHeld) and are sent once it recovers. When it is false, a delivery is dead-lettered
+	// as soon as it meets the open circuit. The API defaults it to true. Holds need a plan with
+	// circuit breakers.
+	HoldOnCircuitOpen bool `json:"holdOnCircuitOpen"`
+	// HeldCount is the number of deliveries held on this route, counted up to 10,000, and
+	// HeldCountCapped is true when there are more. Only Get sets them; List and Create leave
+	// them zero.
+	HeldCount       int  `json:"heldCount"`
+	HeldCountCapped bool `json:"heldCountCapped"`
+}
+
+// UnmarshalJSON keeps expectedResponse as JSON text whether the API sends an object or a string.
+func (r *Route) UnmarshalJSON(data []byte) error {
+	type plain Route
+	var w struct {
+		plain
+		ExpectedResponse json.RawMessage `json:"expectedResponse"`
+	}
+	if err := json.Unmarshal(data, &w); err != nil {
+		return err
+	}
+	*r = Route(w.plain)
+	r.ExpectedResponse = rawJSONText(w.ExpectedResponse)
+	return nil
+}
+
+// rawJSONText returns a JSON value as text: a JSON string's contents, any other value verbatim,
+// and nil for a missing or null value.
+func rawJSONText(raw json.RawMessage) *string {
+	if len(raw) == 0 || string(raw) == "null" {
+		return nil
+	}
+	var s string
+	if raw[0] == '"' && json.Unmarshal(raw, &s) == nil {
+		return &s
+	}
+	s = string(raw)
+	return &s
+}
+
+// expectedResponseWire is the request form of ExpectedResponse: the JSON document itself when the
+// text is valid JSON (the API stringifies whatever it gets, so sending the text as a JSON string
+// stored it double-encoded), otherwise the text as a string.
+func expectedResponseWire(v *string) json.RawMessage {
+	if v == nil {
+		return nil
+	}
+	if json.Valid([]byte(*v)) {
+		return json.RawMessage(*v)
+	}
+	b, _ := json.Marshal(*v)
+	return b
 }
 
 // CreateRouteParams are the parameters for creating a route.
@@ -64,7 +122,44 @@ type CreateRouteParams struct {
 	FailureThreshold       *int              `json:"failureThreshold,omitempty"`
 	FailoverDestinationIDs []string          `json:"failoverDestinationIds,omitempty"`
 	FailoverAfterAttempts  *int              `json:"failoverAfterAttempts,omitempty"`
-	ExpectedResponse       *string           `json:"expectedResponse,omitempty"`
+	// ExpectedResponse is the expected-response rule as JSON text, e.g. `{"statusCodes":[200]}`.
+	ExpectedResponse *string `json:"expectedResponse,omitempty"`
+	// Circuit breaker settings; nil uses the defaults (300 s cooldown, 5 failures, 2 probes).
+	CircuitCooldownSeconds       *int `json:"circuitCooldownSeconds,omitempty"`
+	CircuitFailureThreshold      *int `json:"circuitFailureThreshold,omitempty"`
+	CircuitProbeSuccessThreshold *int `json:"circuitProbeSuccessThreshold,omitempty"`
+	// HoldOnCircuitOpen holds deliveries while the circuit breaker is open, to be sent once it
+	// recovers. False dead-letters a delivery as soon as it meets the open circuit. Nil uses the
+	// API's default, true.
+	HoldOnCircuitOpen *bool `json:"holdOnCircuitOpen,omitempty"`
+}
+
+// MarshalJSON sends ExpectedResponse as the JSON document it holds.
+func (p CreateRouteParams) MarshalJSON() ([]byte, error) {
+	type wire CreateRouteParams
+	return json.Marshal(struct {
+		wire
+		ExpectedResponse json.RawMessage `json:"expectedResponse,omitempty"`
+	}{wire(p), expectedResponseWire(p.ExpectedResponse)})
+}
+
+// RouteField names a route setting, for UpdateRouteParams.Clear.
+type RouteField string
+
+// The route settings Clear can remove.
+const (
+	RouteFilterID               RouteField = "filterId"
+	RouteFilterConditions       RouteField = "filterConditions"
+	RouteTransformID            RouteField = "transformId"
+	RouteSchemaID               RouteField = "schemaId"
+	RouteNotifyEmails           RouteField = "notifyEmails"
+	RouteFailoverDestinationIDs RouteField = "failoverDestinationIds"
+	RouteExpectedResponse       RouteField = "expectedResponse"
+)
+
+var clearableRouteFields = map[RouteField]bool{
+	RouteFilterID: true, RouteFilterConditions: true, RouteTransformID: true, RouteSchemaID: true,
+	RouteNotifyEmails: true, RouteFailoverDestinationIDs: true, RouteExpectedResponse: true,
 }
 
 // UpdateRouteParams are the parameters for updating a route.
@@ -86,13 +181,53 @@ type UpdateRouteParams struct {
 	FailureThreshold       *int              `json:"failureThreshold,omitempty"`
 	FailoverDestinationIDs []string          `json:"failoverDestinationIds,omitempty"`
 	FailoverAfterAttempts  *int              `json:"failoverAfterAttempts,omitempty"`
-	ExpectedResponse       *string           `json:"expectedResponse,omitempty"`
+	// ExpectedResponse is the expected-response rule as JSON text, e.g. `{"statusCodes":[200]}`.
+	ExpectedResponse *string `json:"expectedResponse,omitempty"`
+	// HoldOnCircuitOpen turns holding deliveries while the circuit breaker is open on or off. With
+	// it off, a delivery is dead-lettered as soon as it meets the open circuit. Turning it off
+	// leaves deliveries already held to be released, and they are dead-lettered on their next
+	// attempt if the circuit is still open.
+	HoldOnCircuitOpen *bool `json:"holdOnCircuitOpen,omitempty"`
+
+	// Clear names settings to remove: nil and empty fields above mean "leave alone", so they cannot
+	// also mean "remove". Naming a field here sends a null for it, e.g. RouteFailoverDestinationIDs
+	// to drop every failover destination. Naming a field that is also set is an error.
+	Clear []RouteField `json:"-"`
+}
+
+// MarshalJSON sends ExpectedResponse as the JSON document it holds, and a null for each Clear
+// field.
+func (p UpdateRouteParams) MarshalJSON() ([]byte, error) {
+	type wire UpdateRouteParams
+	encoded, err := json.Marshal(struct {
+		wire
+		ExpectedResponse json.RawMessage `json:"expectedResponse,omitempty"`
+	}{wire(p), expectedResponseWire(p.ExpectedResponse)})
+	if err != nil || len(p.Clear) == 0 {
+		return encoded, err
+	}
+	var body map[string]json.RawMessage
+	if err := json.Unmarshal(encoded, &body); err != nil {
+		return nil, err
+	}
+	for _, f := range p.Clear {
+		if !clearableRouteFields[f] {
+			return nil, fmt.Errorf("hookbase: UpdateRouteParams.Clear names %q, which cannot be cleared", string(f))
+		}
+		if _, set := body[string(f)]; set {
+			return nil, fmt.Errorf("hookbase: UpdateRouteParams.Clear names %q but that field is also set; clear it or set it, not both", string(f))
+		}
+		body[string(f)] = json.RawMessage("null")
+	}
+	return json.Marshal(body)
 }
 
 // ListRoutesParams are the parameters for listing routes.
 type ListRoutesParams struct {
-	Page          *int    `json:"page,omitempty"`
-	PageSize      *int    `json:"pageSize,omitempty"`
+	Page     *int `json:"page,omitempty"`
+	PageSize *int `json:"pageSize,omitempty"`
+	// Deprecated: the API does not filter routes and ignores SourceID, DestinationID and IsActive;
+	// the page holds every route. Filter the returned routes yourself.
 	SourceID      *string `json:"sourceId,omitempty"`
 	DestinationID *string `json:"destinationId,omitempty"`
 	IsActive      *bool   `json:"isActive,omitempty"`
@@ -122,13 +257,29 @@ func (p *ListRoutesParams) toQuery() url.Values {
 }
 
 // CircuitStatusInfo contains circuit breaker status for a route.
+//
+// GET /api/routes/:id/circuit-status (api/src/routes/routes.ts) sends the settings without the
+// circuit prefix — cooldownSeconds, failureThreshold, probeSuccessThreshold — and fills in the
+// defaults (300, 5 and 2) for unset ones. The Go field names stay as the SDK's public contract;
+// the tags map them onto those keys.
 type CircuitStatusInfo struct {
-	CircuitState                 CircuitState `json:"circuitState"`
-	CircuitOpenedAt              *string      `json:"circuitOpenedAt"`
-	CircuitCooldownSeconds       int          `json:"circuitCooldownSeconds"`
-	CircuitFailureThreshold      int          `json:"circuitFailureThreshold"`
-	CircuitProbeSuccessThreshold int          `json:"circuitProbeSuccessThreshold"`
-	RecentFailures               int          `json:"recentFailures"`
+	CircuitState    CircuitState `json:"circuitState"`
+	CircuitOpenedAt *string      `json:"circuitOpenedAt"`
+	// CircuitCooldownSeconds is how long an open circuit waits before probing (cooldownSeconds).
+	CircuitCooldownSeconds int `json:"cooldownSeconds"`
+	// CircuitFailureThreshold is the failures in a row that open the circuit (failureThreshold).
+	CircuitFailureThreshold int `json:"failureThreshold"`
+	// CircuitProbeSuccessThreshold is the successful probes that close it (probeSuccessThreshold).
+	CircuitProbeSuccessThreshold int `json:"probeSuccessThreshold"`
+	// ProbeAttempts is the probes made since the circuit half-opened.
+	ProbeAttempts int `json:"probeAttempts"`
+	// ConsecutiveFailures is the failures in a row so far.
+	ConsecutiveFailures int `json:"consecutiveFailures"`
+	// TimeUntilProbeSeconds is the seconds until an open circuit half-opens; nil unless open.
+	TimeUntilProbeSeconds *int `json:"timeUntilProbeSeconds"`
+
+	// Deprecated: always zero; the API sends no recentFailures. Use ConsecutiveFailures.
+	RecentFailures int `json:"-"`
 }
 
 // CircuitBreakerConfig is the configuration for a circuit breaker.
@@ -250,15 +401,25 @@ func (r *RoutesResource) Export(ctx context.Context, ids []string, opts ...Reque
 
 // ImportRoutesParams are the parameters for importing routes.
 type ImportRoutesParams struct {
-	Routes           []map[string]interface{} `json:"routes"`
-	ConflictStrategy *string                  `json:"conflictStrategy,omitempty"`
-	ValidateOnly     *bool                    `json:"validateOnly,omitempty"`
+	Routes []map[string]interface{} `json:"routes"`
+	// ConflictStrategy is what to do with an item whose name already exists: skip, rename or
+	// overwrite. The API requires one; Import sends skip when it is nil.
+	ConflictStrategy *string `json:"conflictStrategy,omitempty"`
+	// ValidateOnly reports what would happen without changing anything.
+	ValidateOnly *bool `json:"validateOnly,omitempty"`
 }
 
 // Import imports routes from JSON.
 func (r *RoutesResource) Import(ctx context.Context, params *ImportRoutesParams, opts ...RequestOption) (*ImportResult, error) {
 	var resp ImportResult
-	if err := r.t.do(ctx, "POST", "/api/routes/import", nil, params, &resp, opts...); err != nil {
+	body := ImportRoutesParams{}
+	if params != nil {
+		body = *params
+	}
+	if body.ConflictStrategy == nil {
+		body.ConflictStrategy = Ptr(defaultConflictStrategy)
+	}
+	if err := r.t.do(ctx, "POST", "/api/routes/import", nil, body, &resp, opts...); err != nil {
 		return nil, err
 	}
 	return &resp, nil

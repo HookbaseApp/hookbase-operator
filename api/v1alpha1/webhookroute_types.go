@@ -92,9 +92,8 @@ type WebhookRouteSpec struct {
 
 	// HoldOnCircuitOpen holds deliveries while the route's circuit breaker is open and sends them
 	// once it recovers. With it off, a delivery is dead-lettered as soon as it meets the open
-	// circuit. Holds need a plan with circuit breakers. Sent only when set; the CRD defaults it to
-	// true, which is also the API's default.
-	// +kubebuilder:default=true
+	// circuit. Holds need a plan with circuit breakers. Sent only when set: unset leaves the route's
+	// current value, and a new route gets the API's default, true.
 	// +optional
 	HoldOnCircuitOpen *bool `json:"holdOnCircuitOpen,omitempty"`
 

@@ -152,8 +152,9 @@ spec:
   isActive: true
 ```
 
-- `spec.holdOnCircuitOpen` (default `true`) holds deliveries while the route's circuit breaker is
-  open and sends them once it recovers; `false` dead-letters them instead.
+- `spec.holdOnCircuitOpen` holds deliveries while the route's circuit breaker is open and sends
+  them once it recovers; `false` dead-letters them instead. Left unset, the operator doesn't send
+  it: the route keeps its current setting, and a new route gets the API's default, `true`.
 - Removing every `failoverDestinationRefs` entry clears the route's failover destinations in
   Hookbase.
 

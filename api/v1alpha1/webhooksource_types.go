@@ -11,7 +11,7 @@ type IngestMethod string
 //
 // Field names follow the Hookbase API's source schema (POST/PATCH /api/sources), which rejects
 // unknown keys with a 400.
-// +kubebuilder:validation:XValidation:rule="has(self.catalogProvider) == has(oldSelf.catalogProvider) && (!has(self.catalogProvider) || self.catalogProvider == oldSelf.catalogProvider)",message="spec.catalogProvider cannot be added, changed or removed after creation"
+// +kubebuilder:validation:XValidation:rule="(has(self.catalogProvider) ? self.catalogProvider : \"\") == (has(oldSelf.catalogProvider) ? oldSelf.catalogProvider : \"\")",message="spec.catalogProvider cannot be added, changed or removed after creation"
 type WebhookSourceSpec struct {
 	// Name of the source in Hookbase.
 	// +kubebuilder:validation:MinLength=1

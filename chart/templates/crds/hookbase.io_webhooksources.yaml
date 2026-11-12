@@ -50,7 +50,7 @@ spec:
               type: object
               required: [name]
               x-kubernetes-validations:
-                - rule: "has(self.catalogProvider) == has(oldSelf.catalogProvider) && (!has(self.catalogProvider) || self.catalogProvider == oldSelf.catalogProvider)"
+                - rule: "(has(self.catalogProvider) ? self.catalogProvider : '') == (has(oldSelf.catalogProvider) ? oldSelf.catalogProvider : '')"
                   message: spec.catalogProvider cannot be added, changed or removed after creation
               properties:
                 name:

@@ -47,6 +47,42 @@ type ThrottleSpec struct {
 	QueueLimit *int `json:"queueLimit,omitempty"`
 }
 
+// BridgeSpec configures a bridge destination, which publishes each delivery as an outbound event
+// to the organization's endpoints subscribed to its event type. Creating or changing one needs an
+// API key with the events:send permission as well as destinations access.
+type BridgeSpec struct {
+	// EventTypeSource says where the event type comes from: "fixed" publishes every delivery as
+	// eventType; "field" reads it from the payload field eventTypeField.
+	// +kubebuilder:validation:Enum=fixed;field
+	EventTypeSource string `json:"eventTypeSource"`
+
+	// EventType is the event type to publish. Required when eventTypeSource is fixed, not allowed
+	// when it is field. The event type must exist and be enabled.
+	// +optional
+	EventType string `json:"eventType,omitempty"`
+
+	// EventTypeField is the payload field holding the event type, as a dot path of at most five
+	// segments (e.g. "data.type"). Required when eventTypeSource is field, not allowed when it is
+	// fixed.
+	// +optional
+	EventTypeField string `json:"eventTypeField,omitempty"`
+
+	// EventTypePrefix is put in front of the field's value, e.g. "stripe." (eventTypeSource field
+	// only): lowercase letters, digits and dots, starting with a letter, at most 50 characters.
+	// +optional
+	EventTypePrefix string `json:"eventTypePrefix,omitempty"`
+
+	// ApplicationID limits the event to one outbound application's endpoints. Empty sends it to
+	// every subscribed endpoint of the organization.
+	// +optional
+	ApplicationID string `json:"applicationId,omitempty"`
+
+	// AllowUnverifiedSources also publishes events whose sender the source did not verify (by its
+	// signing secret or an IP allowlist). By default those deliveries fail.
+	// +optional
+	AllowUnverifiedSources bool `json:"allowUnverifiedSources,omitempty"`
+}
+
 // WebhookDestinationSpec defines the desired state of a webhook destination.
 type WebhookDestinationSpec struct {
 	// Name of the destination in Hookbase.
@@ -56,27 +92,46 @@ type WebhookDestinationSpec struct {
 	// +optional
 	Slug string `json:"slug,omitempty"`
 
-	// Description of the destination.
+	// Description of the destination. Not sent: the Hookbase API stores no description for a
+	// destination, so this is a note for the manifest only.
 	// +optional
 	Description string `json:"description,omitempty"`
 
-	// Type is the destination type.
+	// Type is the destination type: http; the queue and event-bus types sqs, eventbridge,
+	// servicebus, pubsub and oci_queue; the storage types s3, r2, gcs and azure_blob; or bridge,
+	// which publishes each delivery as an outbound event. The API does not let it change after
+	// creation.
 	// +kubebuilder:default=http
-	// +kubebuilder:validation:Enum=http;s3;r2;gcs;azure_blob
+	// +kubebuilder:validation:Enum=http;sqs;eventbridge;servicebus;pubsub;oci_queue;s3;r2;gcs;azure_blob;bridge
 	// +optional
 	Type string `json:"type,omitempty"`
 
-	// URL is the endpoint to deliver webhooks to. Required for HTTP destinations.
+	// URL is the endpoint to deliver webhooks to. Required for HTTP destinations; leave it empty
+	// for every other type.
 	// +optional
 	URL string `json:"url,omitempty"`
 
-	// ConfigSecretRef references a K8s Secret containing warehouse configuration.
-	// For S3: keys "bucket", "region", "accessKeyId", "secretAccessKey", "prefix" (optional).
-	// For R2: keys "bucket", "endpoint" (S3 API URL), "accessKeyId", "secretAccessKey", "prefix" (optional).
-	// For GCS: keys "bucket", "projectId", "credentials", "prefix" (optional).
-	// For Azure Blob: keys "container", "storageAccount", "accessKey", "prefix" (optional).
+	// ConfigSecretRef references a K8s Secret whose keys are the configuration of a queue or
+	// storage destination, sent as given (every value is a string). Not used by http or bridge.
+	// For SQS: "queueUrl", "region", "accessKeyId", "secretAccessKey", "messageGroupId" (optional).
+	// For EventBridge: "eventBusName", "region", "accessKeyId", "secretAccessKey", "source" and
+	// "detailType" (optional).
+	// For Service Bus: "namespace", "queueOrTopicName", "sharedAccessKeyName", "sharedAccessKey".
+	// For Pub/Sub: "projectId", "topicId", "serviceAccountKey" (the JSON key).
+	// For OCI Queue: "queueId", "region", "endpoint", "authToken".
+	// For S3: "bucket", "region", "accessKeyId", "secretAccessKey", "prefix" (optional).
+	// For R2: "bucket", "endpoint" (S3 API URL), "accessKeyId", "secretAccessKey", "prefix" (optional).
+	// For GCS: "bucket", "projectId", "serviceAccountKey", "prefix" (optional).
+	// For Azure Blob: "accountName", "accountKey", "containerName", "prefix" (optional).
+	// The storage types also take "fileFormat" (json, jsonl) and "partitionBy" (date, hour, source),
+	// and S3 and GCS "compressionType" (none, gzip).
 	// +optional
 	ConfigSecretRef *SecretKeyRef `json:"configSecretRef,omitempty"`
+
+	// Bridge is the configuration of a bridge destination, required when type is bridge and
+	// ignored otherwise. It holds no secrets, so it is set inline rather than from a Secret.
+	// +optional
+	Bridge *BridgeSpec `json:"bridge,omitempty"`
 
 	// FieldMapping defines field mappings for warehouse destinations.
 	// +optional
@@ -107,7 +162,8 @@ type WebhookDestinationSpec struct {
 	// +optional
 	TimeoutMs *int `json:"timeoutMs,omitempty"`
 
-	// RetryCount is the number of retries on failure.
+	// RetryCount is not sent: retries are not configured per destination in Hookbase (the route
+	// and the delivery worker own the retry policy). Kept so existing manifests still apply.
 	// +optional
 	RetryCount *int `json:"retryCount,omitempty"`
 
@@ -140,6 +196,12 @@ type WebhookDestinationSpec struct {
 type WebhookDestinationStatus struct {
 	// DestinationID is the Hookbase API resource ID.
 	DestinationID string `json:"destinationId,omitempty"`
+
+	// HasSigningSecret reports whether the destination signs its deliveries. Every http
+	// destination does; the operator keeps its secret in the operator-owned Secret
+	// "<name>-signing-secret" under key "signingSecret". Other types have none.
+	// +optional
+	HasSigningSecret bool `json:"hasSigningSecret,omitempty"`
 
 	// ObservedGeneration is the last generation reconciled.
 	ObservedGeneration int64 `json:"observedGeneration,omitempty"`

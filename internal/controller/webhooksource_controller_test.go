@@ -514,3 +514,56 @@ func TestIngressRejectInvalidSignaturesAnnotations(t *testing.T) {
 		}
 	}
 }
+
+func TestSourceRemovedListsAreClearedOnTheServer(t *testing.T) {
+	h := newSourceHarness(t, apiSource("custom", nil), hookbasev1alpha1.WebhookSourceSpec{
+		Name:           "Hooks",
+		Provider:       "custom",
+		IPFilterMode:   "both",
+		IPAllowlist:    []string{"10.0.0.0/8"},
+		IPDenylist:     []string{"10.1.0.0/16"},
+		AllowedMethods: []hookbasev1alpha1.IngestMethod{"POST"},
+	})
+	h.sync()
+	lists := []string{"ipAllowlist", "ipDenylist", "allowedMethods"}
+
+	// Still set: the update restates them.
+	got := h.reconcile()
+	patches := h.api.find("PATCH", "/api/sources/src_1")
+	for _, field := range lists {
+		if values, ok := patches[0].Body[field].([]interface{}); !ok || len(values) != 1 {
+			t.Errorf("update %s = %v", field, patches[0].Body[field])
+		}
+	}
+
+	// Removed from the manifest: each must go out as an explicit null, or the server keeps it.
+	got.Spec.IPFilterMode = "none"
+	got.Spec.IPAllowlist = nil
+	got.Spec.IPDenylist = []string{} // an explicit empty list clears too
+	got.Spec.AllowedMethods = nil
+	if err := h.k8s.Update(context.Background(), got); err != nil {
+		t.Fatal(err)
+	}
+	h.reconcile()
+	patches = h.api.find("PATCH", "/api/sources/src_1")
+	last := patches[len(patches)-1].Body
+	for _, field := range lists {
+		if value, ok := last[field]; !ok || value != nil {
+			t.Errorf("update should clear %s with null, sent %v (present: %v)", field, value, ok)
+		}
+	}
+}
+
+func TestSourceCatalogProviderSentOnCreateOnly(t *testing.T) {
+	h := newSourceHarness(t, apiSource("stripe", map[string]interface{}{"catalogProvider": "stripe"}),
+		hookbasev1alpha1.WebhookSourceSpec{Name: "Hooks", Provider: "stripe", CatalogProvider: "stripe"})
+	h.sync()
+	h.reconcile()
+
+	if got := h.api.find("POST", "/api/sources")[0].Body["catalogProvider"]; got != "stripe" {
+		t.Fatalf("create catalogProvider = %v", got)
+	}
+	if _, ok := h.api.find("PATCH", "/api/sources/src_1")[0].Body["catalogProvider"]; ok {
+		t.Fatal("update must not send catalogProvider: the API sets it on create only")
+	}
+}

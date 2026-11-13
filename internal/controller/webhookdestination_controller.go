@@ -99,21 +99,29 @@ func (r *WebhookDestinationReconciler) Reconcile(ctx context.Context, req ctrl.R
 	}
 	authType := hookbasesdk.AuthType(dest.Spec.AuthType)
 
-	// Resolve warehouse config from Secret if needed
-	var warehouseConfig map[string]interface{}
-	destType := dest.Spec.Type
-	if destType == "" {
-		destType = "http"
-	}
-	isWarehouse := destType != "http"
-	if isWarehouse && dest.Spec.ConfigSecretRef != nil {
-		warehouseConfig, err = r.resolveWarehouseConfig(ctx, dest.Namespace, dest.Spec.ConfigSecretRef)
+	// The destination's config: a bridge's comes from spec.bridge; a queue or storage
+	// destination's from the Secret configSecretRef names. An http destination has none.
+	destType := destinationType(&dest.Spec)
+	var config interface{}
+	switch {
+	case destType == destinationTypeBridge:
+		if dest.Spec.Bridge == nil {
+			hookbasev1alpha1.SetCondition(&dest.Status.Conditions, hookbasev1alpha1.ConditionReady,
+				metav1.ConditionFalse, "InvalidSpec", "spec.bridge is required for bridge destinations", dest.Generation)
+			_ = r.Status().Update(ctx, &dest)
+			metrics.ReconcileTotal.WithLabelValues("WebhookDestination", "error").Inc()
+			return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
+		}
+		config = toSDKBridgeConfig(dest.Spec.Bridge)
+	case destType != destinationTypeHTTP && dest.Spec.ConfigSecretRef != nil:
+		secretConfig, err := r.resolveWarehouseConfig(ctx, dest.Namespace, dest.Spec.ConfigSecretRef)
 		if err != nil {
 			hookbasev1alpha1.SetCondition(&dest.Status.Conditions, hookbasev1alpha1.ConditionReady,
 				metav1.ConditionFalse, "ConfigSecretError", err.Error(), dest.Generation)
 			_ = r.Status().Update(ctx, &dest)
 			return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
 		}
+		config = secretConfig
 	}
 
 	// Convert field mappings
@@ -131,25 +139,24 @@ func (r *WebhookDestinationReconciler) Reconcile(ctx context.Context, req ctrl.R
 			URL:                dest.Spec.URL,
 			Method:             &method,
 			Headers:            dest.Spec.Headers,
-			AuthType:           &authType,
 			AuthConfig:         authConfig,
-			Timeout:            dest.Spec.TimeoutMs,
-			RetryCount:         dest.Spec.RetryCount,
+			TimeoutMs:          dest.Spec.TimeoutMs,
 			Throttle:           sdkThrottle,
 			UseStaticIP:        dest.Spec.UseStaticIP,
 			BatchSize:          dest.Spec.BatchSize,
 			BatchWindowSeconds: dest.Spec.BatchWindowSeconds,
+			Config:             config,
+		}
+		// The create schema has no "" for authType (a 400), unlike update, where "" clears it.
+		if authType != "" {
+			params.AuthType = &authType
 		}
 		if dest.Spec.Slug != "" {
 			params.Slug = &dest.Spec.Slug
 		}
-		if dest.Spec.Description != "" {
-			params.Description = &dest.Spec.Description
-		}
-		if isWarehouse {
+		if destType != destinationTypeHTTP {
 			dt := hookbasesdk.DestinationType(destType)
 			params.Type = &dt
-			params.Config = warehouseConfig
 		}
 		if len(sdkFieldMappings) > 0 {
 			params.FieldMapping = sdkFieldMappings
@@ -165,7 +172,19 @@ func (r *WebhookDestinationReconciler) Reconcile(ctx context.Context, req ctrl.R
 			return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
 		}
 		dest.Status.DestinationID = apiDest.ID
+		dest.Status.HasSigningSecret = apiDest.HasSigningSecret
 		log.Info("created destination", "destinationId", apiDest.ID)
+
+		// An http destination's signing secret is in the create response only. Keep it in the
+		// operator-owned Secret; if that fails, a later reconcile reads it back through
+		// reveal-secret.
+		if apiDest.SigningSecret != "" {
+			if err := r.ownedSecret(&dest).store(ctx, ownedSecretKeySigningSecret, apiDest.SigningSecret); err != nil {
+				log.Error(err, "failed to store signing secret")
+			}
+		} else {
+			r.backfillOwnedSecret(ctx, sdkClient, &dest, apiDest)
+		}
 	} else {
 		// UPDATE
 		params := &hookbasesdk.UpdateDestinationParams{
@@ -175,18 +194,12 @@ func (r *WebhookDestinationReconciler) Reconcile(ctx context.Context, req ctrl.R
 			Headers:            dest.Spec.Headers,
 			AuthType:           &authType,
 			AuthConfig:         authConfig,
-			Timeout:            dest.Spec.TimeoutMs,
-			RetryCount:         dest.Spec.RetryCount,
+			TimeoutMs:          dest.Spec.TimeoutMs,
 			Throttle:           sdkThrottle,
 			UseStaticIP:        dest.Spec.UseStaticIP,
 			BatchSize:          dest.Spec.BatchSize,
 			BatchWindowSeconds: dest.Spec.BatchWindowSeconds,
-		}
-		if dest.Spec.Description != "" {
-			params.Description = &dest.Spec.Description
-		}
-		if isWarehouse {
-			params.Config = warehouseConfig
+			Config:             config,
 		}
 		if len(sdkFieldMappings) > 0 {
 			params.FieldMapping = sdkFieldMappings
@@ -196,6 +209,7 @@ func (r *WebhookDestinationReconciler) Reconcile(ctx context.Context, req ctrl.R
 			var notFound *hookbasesdk.NotFoundError
 			if errors.As(err, &notFound) {
 				dest.Status.DestinationID = ""
+				dest.Status.HasSigningSecret = false
 				_ = r.Status().Update(ctx, &dest)
 				return ctrl.Result{Requeue: true}, nil
 			}
@@ -204,6 +218,20 @@ func (r *WebhookDestinationReconciler) Reconcile(ctx context.Context, req ctrl.R
 			_ = r.Status().Update(ctx, &dest)
 			metrics.ReconcileTotal.WithLabelValues("WebhookDestination", "error").Inc()
 			return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
+		}
+
+		// PATCH answers {success: true}, so an http destination is read back for hasSigningSecret
+		// (one GET per reconcile). Only http destinations sign, so the others skip it.
+		if destType == destinationTypeHTTP {
+			got, err := sdkClient.Destinations.Get(ctx, dest.Status.DestinationID)
+			if err != nil {
+				log.Error(err, "failed to read destination back after update", "destinationId", dest.Status.DestinationID)
+			} else {
+				dest.Status.HasSigningSecret = got.HasSigningSecret
+				r.backfillOwnedSecret(ctx, sdkClient, &dest, got)
+			}
+		} else {
+			dest.Status.HasSigningSecret = false
 		}
 	}
 
@@ -218,6 +246,84 @@ func (r *WebhookDestinationReconciler) Reconcile(ctx context.Context, req ctrl.R
 	_ = r.Status().Update(ctx, &dest)
 	metrics.ReconcileTotal.WithLabelValues("WebhookDestination", "success").Inc()
 	return ctrl.Result{RequeueAfter: r.RequeueAfter}, nil
+}
+
+const (
+	destinationTypeHTTP   = "http"
+	destinationTypeBridge = "bridge"
+)
+
+// destinationType returns spec.type, or http when it is unset.
+func destinationType(spec *hookbasev1alpha1.WebhookDestinationSpec) string {
+	if spec.Type == "" {
+		return destinationTypeHTTP
+	}
+	return spec.Type
+}
+
+// toSDKBridgeConfig maps spec.bridge onto the API's bridge config. Unset fields are omitted, which
+// the API requires for the ones that do not belong to the chosen eventTypeSource.
+func toSDKBridgeConfig(spec *hookbasev1alpha1.BridgeSpec) *hookbasesdk.BridgeConfig {
+	config := &hookbasesdk.BridgeConfig{
+		EventTypeSource:        hookbasesdk.BridgeEventTypeSource(spec.EventTypeSource),
+		EventType:              spec.EventType,
+		EventTypeField:         spec.EventTypeField,
+		EventTypePrefix:        spec.EventTypePrefix,
+		AllowUnverifiedSources: spec.AllowUnverifiedSources,
+	}
+	if spec.ApplicationID != "" {
+		config.ApplicationID = &spec.ApplicationID
+	}
+	return config
+}
+
+// ownedSecret is the operator-owned Secret "<name>-signing-secret" holding an http destination's
+// signing secret.
+func (r *WebhookDestinationReconciler) ownedSecret(dest *hookbasev1alpha1.WebhookDestination) ownedSecret {
+	return ownedSecret{
+		c:      r.Client,
+		scheme: r.Scheme,
+		owner:  dest,
+		kind:   "WebhookDestination",
+		labels: map[string]string{"hookbase.io/destination": dest.Name},
+	}
+}
+
+// backfillOwnedSecret copies a destination's signing secret into the operator-owned Secret when
+// the Secret lacks it: a destination created by an operator that did not store it, a Secret
+// deleted by hand, or a store that failed after create. It reads the secret through reveal-secret
+// only then, never on a reconcile that finds it already stored. A Secret of that name the
+// destination does not control is left alone. Failures are logged, not returned.
+func (r *WebhookDestinationReconciler) backfillOwnedSecret(ctx context.Context, sdkClient *hookbasesdk.Client, dest *hookbasev1alpha1.WebhookDestination, apiDest *hookbasesdk.Destination) {
+	if !apiDest.HasSigningSecret {
+		return
+	}
+	log := log.FromContext(ctx)
+	owned := r.ownedSecret(dest)
+	data, found, ours, err := owned.read(ctx)
+	if err != nil {
+		log.Error(err, "failed to read operator-owned Secret")
+		return
+	}
+	if found && !ours {
+		log.Info("not storing the signing secret: a Secret with the operator-owned name exists and this destination does not control it",
+			"secret", owned.name())
+		return
+	}
+	if len(data[ownedSecretKeySigningSecret]) > 0 {
+		return
+	}
+	revealed, err := sdkClient.Destinations.RevealSecret(ctx, apiDest.ID)
+	if err != nil {
+		log.Error(err, "failed to reveal signing secret for backfill", "destinationId", apiDest.ID)
+		return
+	}
+	if revealed.SigningSecret == "" {
+		return
+	}
+	if err := owned.store(ctx, ownedSecretKeySigningSecret, revealed.SigningSecret); err != nil {
+		log.Error(err, "failed to store signing secret")
+	}
 }
 
 func (r *WebhookDestinationReconciler) resolveAuthConfig(ctx context.Context, namespace string, ref *hookbasev1alpha1.SecretKeyRef, authType string) (map[string]interface{}, error) {
@@ -306,5 +412,6 @@ func toSDKThrottle(spec *hookbasev1alpha1.ThrottleSpec) *hookbasesdk.Throttle {
 func (r *WebhookDestinationReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&hookbasev1alpha1.WebhookDestination{}).
+		Owns(&corev1.Secret{}).
 		Complete(r)
 }

@@ -85,9 +85,17 @@ type WebhookRouteSpec struct {
 	// +optional
 	IsActive *bool `json:"isActive,omitempty"`
 
-	// FailoverDestinationRefs are names of WebhookDestinations for failover.
+	// FailoverDestinationRefs are names of WebhookDestinations for failover. Removing them all
+	// removes the route's failover destinations in Hookbase.
 	// +optional
 	FailoverDestinationRefs []string `json:"failoverDestinationRefs,omitempty"`
+
+	// HoldOnCircuitOpen holds deliveries while the route's circuit breaker is open and sends them
+	// once it recovers. With it off, a delivery is dead-lettered as soon as it meets the open
+	// circuit. Holds need a plan with circuit breakers. Sent only when set: unset leaves the route's
+	// current value, and a new route gets the API's default, true.
+	// +optional
+	HoldOnCircuitOpen *bool `json:"holdOnCircuitOpen,omitempty"`
 
 	// CircuitBreaker configures the circuit breaker for this route.
 	// +optional

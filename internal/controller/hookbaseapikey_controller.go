@@ -127,14 +127,11 @@ func (r *HookbaseAPIKeyReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 			return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
 		}
 
-		// Update name if changed
+		// The API cannot rename an API key: the SDK's Update always fails without sending
+		// anything, as every request it made before was a 404. A changed name is reported only.
 		if existing.Name != apiKey.Spec.Name {
-			_, err := sdkClient.APIKeys.Update(ctx, apiKey.Status.APIKeyID, &hookbasesdk.UpdateAPIKeyParams{
-				Name: &apiKey.Spec.Name,
-			})
-			if err != nil {
-				log.Error(err, "failed to update API key name")
-			}
+			log.Info("spec.name differs from the API key's name, and the Hookbase API cannot rename a key; recreate the HookbaseAPIKey to change it",
+				"apiKeyId", apiKey.Status.APIKeyID)
 		}
 	}
 

@@ -49,6 +49,9 @@ spec:
             spec:
               type: object
               required: [name]
+              x-kubernetes-validations:
+                - rule: "(has(self.catalogProvider) ? self.catalogProvider : '') == (has(oldSelf.catalogProvider) ? oldSelf.catalogProvider : '')"
+                  message: spec.catalogProvider cannot be added, changed or removed after creation
               properties:
                 name:
                   type: string
@@ -63,6 +66,9 @@ spec:
                   default: generic
                 description:
                   type: string
+                catalogProvider:
+                  type: string
+                  maxLength: 100
                 signingSecretRef:
                   type: object
                   required: [name]

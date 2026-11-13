@@ -1,4 +1,4 @@
-# github.com/HookbaseApp/hookbase-go v1.13.1-0.20261112214011-34ca844ffe55
+# github.com/HookbaseApp/hookbase-go v1.14.0
 ## explicit; go 1.21
 github.com/HookbaseApp/hookbase-go
 # github.com/beorn7/perks v1.0.1
